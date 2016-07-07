@@ -37,10 +37,14 @@ func TestFsnotifyRotate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := SetFile(filename); err != nil {
+	writer, err := NewReopenWriter(filename)
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer SetFile("")
+	defer writer.Close()
+
+	logrus.SetOutput(writer)
+	defer logrus.SetOutput(os.Stderr)
 
 	checkExists := func(text string) {
 		fd, err := os.Open(filename)

@@ -49,6 +49,6 @@ func TestSetLevel(t *testing.T) {
 		})
 	}
 
-	err := SetLevel("unknown")
+	err := SetLevel(nil, "unknown")
 	assert.Error(err)
 }

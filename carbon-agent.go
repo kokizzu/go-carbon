@@ -83,7 +83,7 @@ func main() {
 		}
 	}
 
-	if err := logging.SetLevel(cfg.Common.LogLevel); err != nil {
+	if err := logging.SetLevel(nil, cfg.Common.LogLevel); err != nil {
 		log.Fatal(err)
 	}
 
@@ -96,8 +96,14 @@ func main() {
 		logrus.Fatal(err)
 	}
 
-	if err := logging.SetFile(cfg.Common.Logfile); err != nil {
-		logrus.Fatal(err)
+	if cfg.Common.Logfile == "" {
+		logrus.SetOutput(os.Stderr)
+	} else {
+		w, err := logging.NewReopenWriter(cfg.Common.Logfile)
+		if err != nil {
+			logrus.Fatal(err)
+		}
+		logrus.SetOutput(w)
 	}
 
 	if *isDaemon {
