@@ -109,18 +109,18 @@ func (rcv *TCP) handleConnection(conn net.Conn) {
 		if err != nil {
 			if err == io.EOF {
 				if len(line) > 0 {
-					logrus.Warningf("[tcp] Unfinished line: %#v", line)
+					MessageLog("[tcp] Unfinished line: %#v", line)
 				}
 			} else {
 				atomic.AddUint32(&rcv.errors, 1)
-				logrus.Error(err)
+				logrus.Errorf("[tcp] %s", err.Error())
 			}
 			break
 		}
 		if len(line) > 0 { // skip empty lines
 			if msg, err := points.ParseText(string(line)); err != nil {
 				atomic.AddUint32(&rcv.errors, 1)
-				logrus.Info(err)
+				MessageLog("[tcp] %s", err.Error())
 			} else {
 				atomic.AddUint32(&rcv.metricsReceived, 1)
 				rcv.out <- msg
@@ -171,13 +171,13 @@ func (rcv *TCP) handlePickle(conn net.Conn) {
 			}
 
 			atomic.AddUint32(&rcv.errors, 1)
-			logrus.Warningf("[pickle] Can't read message length: %s", err.Error())
+			MessageLog("[pickle] Can't read message length: %s", err.Error())
 			return
 		}
 
 		if msgLen > maxMessageSize {
 			atomic.AddUint32(&rcv.errors, 1)
-			logrus.Warningf("[pickle] Bad message size: %d", msgLen)
+			MessageLog("[pickle] Bad message size: %d", msgLen)
 			return
 		}
 
@@ -187,7 +187,7 @@ func (rcv *TCP) handlePickle(conn net.Conn) {
 		// Read remainder of pickle packet into byte array
 		if err = binary.Read(reader, binary.BigEndian, data); err != nil {
 			atomic.AddUint32(&rcv.errors, 1)
-			logrus.Warningf("[pickle] Can't read message body: %s", err.Error())
+			MessageLog("[pickle] Can't read message body: %s", err.Error())
 			return
 		}
 
@@ -195,8 +195,7 @@ func (rcv *TCP) handlePickle(conn net.Conn) {
 
 		if err != nil {
 			atomic.AddUint32(&rcv.errors, 1)
-			logrus.Infof("[pickle] Can't unpickle message: %s", err.Error())
-			logrus.Debugf("[pickle] Bad message: %#v", string(data))
+			MessageLog("[pickle] Can't parse pickle message %#v: %s", string(data), err.Error())
 			return
 		}
 

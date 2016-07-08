@@ -10,8 +10,11 @@ import (
 	"github.com/Sirupsen/logrus"
 )
 
+var badMessageLogger *logrus.Logger
+
 func init() {
 	logrus.SetFormatter(&TextFormatter{})
+	badMessageLogger = logrus.StandardLogger()
 }
 
 // SetLevel for default logger

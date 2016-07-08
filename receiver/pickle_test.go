@@ -45,6 +45,6 @@ func TestPickleMemoryError(t *testing.T) {
 		test.Send("\x80\x00\x00\x00") // 2Gb message length
 		time.Sleep(10 * time.Millisecond)
 
-		assert.Contains(log.String(), "W [pickle] Bad message size: 2147483648")
+		assert.Contains(log.String(), "I [pickle] Bad message size: 2147483648")
 	})
 }
