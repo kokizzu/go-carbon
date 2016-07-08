@@ -1,10 +1,14 @@
 package receiver
 
-import "github.com/Sirupsen/logrus"
+import (
+	"fmt"
+
+	"github.com/Sirupsen/logrus"
+)
 
 var MessageLog = logrus.StandardLogger().Infof
 
-func SetupMessageLog(logger *logrus.Logger, level string) {
+func SetupMessageLog(logger *logrus.Logger, level string) error {
 	switch level {
 	case "debug":
 		MessageLog = logger.Debugf
@@ -15,6 +19,8 @@ func SetupMessageLog(logger *logrus.Logger, level string) {
 	case "error":
 		MessageLog = logger.Errorf
 	default:
-		MessageLog = logger.Infof
+		return fmt.Errorf("unknown level %#v", level)
 	}
+
+	return nil
 }

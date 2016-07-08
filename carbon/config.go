@@ -36,12 +36,14 @@ func (d *Duration) Value() time.Duration {
 }
 
 type commonConfig struct {
-	User           string    `toml:"user"`
-	Logfile        string    `toml:"logfile"`
-	LogLevel       string    `toml:"log-level"`
-	GraphPrefix    string    `toml:"graph-prefix"`
-	MetricInterval *Duration `toml:"metric-interval"`
-	MaxCPU         int       `toml:"max-cpu"`
+	User              string    `toml:"user"`
+	Logfile           string    `toml:"logfile"`
+	LogLevel          string    `toml:"log-level"`
+	BadMessageLogfile string    `toml:"bad-message-logfile"`
+	BadMessageLevel   string    `toml:"bad-message-level"`
+	GraphPrefix       string    `toml:"graph-prefix"`
+	MetricInterval    *Duration `toml:"metric-interval"`
+	MaxCPU            int       `toml:"max-cpu"`
 }
 
 type whisperConfig struct {
@@ -107,9 +109,11 @@ type Config struct {
 func NewConfig() *Config {
 	cfg := &Config{
 		Common: commonConfig{
-			Logfile:     "/var/log/go-carbon/go-carbon.log",
-			LogLevel:    "info",
-			GraphPrefix: "carbon.agents.{host}.",
+			Logfile:           "/var/log/go-carbon/go-carbon.log",
+			LogLevel:          "info",
+			BadMessageLogfile: "",
+			BadMessageLevel:   "info",
+			GraphPrefix:       "carbon.agents.{host}.",
 			MetricInterval: &Duration{
 				Duration: time.Minute,
 			},

@@ -16,6 +16,7 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/lomik/go-carbon/carbon"
 	"github.com/lomik/go-carbon/logging"
+	"github.com/lomik/go-carbon/receiver"
 	"github.com/lomik/go-daemon"
 )
 
@@ -104,6 +105,30 @@ func main() {
 			logrus.Fatal(err)
 		}
 		logrus.SetOutput(w)
+	}
+
+	badMessageLogger := logrus.StandardLogger()
+	if cfg.Common.BadMessageLogfile != "" && cfg.Common.BadMessageLogfile != cfg.Common.Logfile {
+
+		if err := logging.PrepareFile(cfg.Common.Logfile, runAsUser); err != nil {
+			logrus.Fatal(err)
+		}
+
+		w, err := logging.NewReopenWriter(cfg.Common.BadMessageLogfile)
+		if err != nil {
+			logrus.Fatal(err)
+		}
+
+		badMessageLogger = &logrus.Logger{
+			Out:       w,
+			Formatter: &logging.TextFormatter{},
+			Level:     logrus.DebugLevel,
+		}
+	}
+
+	err = receiver.SetupMessageLog(badMessageLogger, cfg.Common.BadMessageLevel)
+	if err != nil {
+		logrus.Fatal(err)
 	}
 
 	if *isDaemon {
