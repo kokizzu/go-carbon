@@ -9,17 +9,17 @@ import (
 	"os"
 	"os/signal"
 	"os/user"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"syscall"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/lomik/go-carbon/carbon"
-	"github.com/lomik/go-carbon/logging"
 	daemon "github.com/sevlyar/go-daemon"
-)
+	"github.com/uber-go/zap"
 
-import _ "net/http/pprof"
+	_ "net/http/pprof"
+)
 
 // Version of go-carbon
 const Version = "0.9.0"
@@ -37,6 +37,74 @@ func httpServe(addr string) (func(), error) {
 
 	go http.Serve(listener, nil)
 	return func() { listener.Close() }, nil
+}
+
+func loggingLevel(cfg *carbon.Config) (zap.Level, error) {
+	var logLevel zap.Level
+
+	if cfg.Common.LogLevel != "" {
+		log.Println("[WARNING] `common.log-level` is DEPRICATED. Use `logging` config section")
+		if err = logLevel.UnmarshalText([]byte(cfg.Common.LogLevel)); err != nil {
+			return nil, err
+		}
+		return logLevel, nil
+	}
+
+	if err = logLevel.UnmarshalText([]byte(cfg.Logging.Level)); err != nil {
+		return nil, err
+	}
+	return logLevel, nil
+}
+
+func loggingFile(cfg *carbon.Config) (string, error) {
+	if cfg.Common.Logfile != "" {
+		log.Println("[WARNING] `common.logfile` is DEPRICATED. Use `logging` config section")
+		return cfg.Common.Logfile, nil
+	}
+
+	return cfg.Logging.File, nil
+}
+
+func loggingPrepare(filename string, owner *user.User) error {
+	if filename == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(filename), 0755); err != nil {
+		return err
+	}
+
+	fd, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+	if fd != nil {
+		fd.Close()
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.Chmod(filename, 0644); err != nil {
+		return err
+	}
+	if owner != nil {
+
+		uid, err := strconv.ParseInt(owner.Uid, 10, 0)
+		if err != nil {
+			return err
+		}
+
+		gid, err := strconv.ParseInt(owner.Gid, 10, 0)
+		if err != nil {
+			return err
+		}
+
+		if err := os.Chown(filename, int(uid), int(gid)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func loggingInit(filename string, level zap.Level) (zap.Logger, error) {
+	return nil, nil
 }
 
 func main() {
@@ -83,7 +151,13 @@ func main() {
 		}
 	}
 
-	if err := logging.SetLevel(cfg.Common.LogLevel); err != nil {
+	logLevel, err := loggingLevel(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	logFile, err := loggingFile(cfg)
+	if err != nil {
 		log.Fatal(err)
 	}
 
@@ -92,12 +166,13 @@ func main() {
 		return
 	}
 
-	if err := logging.PrepareFile(cfg.Common.Logfile, runAsUser); err != nil {
-		logrus.Fatal(err)
+	if err := loggingPrepare(logFile, runAsUser); err != nil {
+		log.Fatal(err)
 	}
 
-	if err := logging.SetFile(cfg.Common.Logfile); err != nil {
-		logrus.Fatal(err)
+	logger, err := loggingInit(logFile, logLevel)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	if *isDaemon {
@@ -142,14 +217,14 @@ func main() {
 	if cfg.Pprof.Enabled {
 		_, err = httpServe(cfg.Pprof.Listen)
 		if err != nil {
-			logrus.Fatal(err)
+			zap.Fatal(err)
 		}
 	}
 
 	if err = app.Start(); err != nil {
-		logrus.Fatal(err)
+		zap.Fatal(err)
 	} else {
-		logrus.Info("started")
+		zap.Info("started")
 	}
 
 	go func() {
@@ -166,16 +241,16 @@ func main() {
 		signal.Notify(c, syscall.SIGHUP)
 		for {
 			<-c
-			logrus.Info("HUP received. Reload config")
+			zap.Info("HUP received. Reload config")
 			if err := app.ReloadConfig(); err != nil {
-				logrus.Errorf("Config reload failed: %s", err.Error())
+				zap.Error("config reload failed", zap.Error(err.Error))
 			} else {
-				logrus.Info("Config successfully reloaded")
+				zap.Info("config successfully reloaded")
 			}
 		}
 	}()
 
 	app.Loop()
 
-	logrus.Info("stopped")
+	zap.Info("stopped")
 }
