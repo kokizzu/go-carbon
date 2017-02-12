@@ -9,11 +9,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/lomik/go-carbon/cache"
 	"github.com/lomik/go-carbon/carbonserver"
 	"github.com/lomik/go-carbon/persister"
 	"github.com/lomik/go-carbon/receiver"
+	"github.com/uber-go/zap"
 )
 
 type App struct {
@@ -28,6 +28,7 @@ type App struct {
 	Persister      *persister.Whisper
 	Carbonserver   *carbonserver.CarbonserverListener
 	Collector      *Collector // (!!!) Should be re-created on every change config/modules
+	logger         zap.Logger
 	exit           chan bool
 }
 
@@ -141,31 +142,31 @@ func (app *App) stopListeners() {
 	if app.TCP != nil {
 		app.TCP.Stop()
 		app.TCP = nil
-		logrus.Debug("[tcp] finished")
+		app.Logger.Debug("stopped", zap.String("module", "tcp"))
 	}
 
 	if app.Pickle != nil {
 		app.Pickle.Stop()
 		app.Pickle = nil
-		logrus.Debug("[pickle] finished")
+		app.Logger.Debug("stopped", zap.String("module", "pickle"))
 	}
 
 	if app.UDP != nil {
 		app.UDP.Stop()
 		app.UDP = nil
-		logrus.Debug("[udp] finished")
+		app.Logger.Debug("stopped", zap.String("module", "udp"))
 	}
 
 	if app.CarbonLink != nil {
 		app.CarbonLink.Stop()
 		app.CarbonLink = nil
-		logrus.Debug("[carbonlink] finished")
+		app.Logger.Debug("stopped", zap.String("module", "carbonlink"))
 	}
 
 	if app.Carbonserver != nil {
 		app.Carbonserver.Stop()
 		app.Carbonserver = nil
-		logrus.Debug("[carbonserver] finished")
+		app.Logger.Debug("stopped", zap.String("module", "carbonserver"))
 	}
 }
 
@@ -175,25 +176,25 @@ func (app *App) stopAll() {
 	if app.Persister != nil {
 		app.Persister.Stop()
 		app.Persister = nil
-		logrus.Debug("[persister] finished")
+		app.Logger.Debug("stopped", zap.String("module", "persister"))
 	}
 
 	if app.Cache != nil {
 		app.Cache.Stop()
 		app.Cache = nil
-		logrus.Debug("[cache] finished")
+		app.Logger.Debug("stopped", zap.String("module", "cache"))
 	}
 
 	if app.Collector != nil {
 		app.Collector.Stop()
 		app.Collector = nil
-		logrus.Debug("[stat] finished")
+		app.Logger.Debug("stopped", zap.String("module", "stat"))
 	}
 
 	if app.exit != nil {
 		close(app.exit)
 		app.exit = nil
-		logrus.Debug("[app] close(exit)")
+		app.Logger.Debug("close(exit)", zap.String("module", "app"))
 	}
 }
 
@@ -224,7 +225,7 @@ func (app *App) startPersister() {
 }
 
 // Start starts
-func (app *App) Start() (err error) {
+func (app *App) Start(logger zap.Logger) (err error) {
 	app.Lock()
 	defer app.Unlock()
 

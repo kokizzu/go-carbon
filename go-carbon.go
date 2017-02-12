@@ -104,7 +104,22 @@ func loggingPrepare(filename string, owner *user.User) error {
 }
 
 func loggingInit(filename string, level zap.Level) (zap.Logger, error) {
-	return nil, nil
+	zapOutput, err := zapwriter.New(cfg.Logging.File)
+	if err != nil {
+		return nil, err
+	}
+
+	dynamicLevel := zap.DynamicLevel()
+	dynamicLevel.SetLevel(logLevel)
+
+	logger := zap.New(
+		zapwriter.NewMixedEncoder(),
+		zap.AddCaller(),
+		zap.Output(zapOutput),
+		dynamicLevel,
+	)
+
+	return logger, nil
 }
 
 func main() {
@@ -187,12 +202,12 @@ func main() {
 		if runAsUser != nil {
 			uid, err := strconv.ParseInt(runAsUser.Uid, 10, 0)
 			if err != nil {
-				log.Fatal(err)
+				logger.Fatal(err)
 			}
 
 			gid, err := strconv.ParseInt(runAsUser.Gid, 10, 0)
 			if err != nil {
-				log.Fatal(err)
+				logger.Fatal(err)
 			}
 
 			context.Credential = &syscall.Credential{
@@ -217,14 +232,14 @@ func main() {
 	if cfg.Pprof.Enabled {
 		_, err = httpServe(cfg.Pprof.Listen)
 		if err != nil {
-			zap.Fatal(err)
+			logger.Fatal(err)
 		}
 	}
 
-	if err = app.Start(); err != nil {
-		zap.Fatal(err)
+	if err = app.Start(logger); err != nil {
+		logger.Fatal(err)
 	} else {
-		zap.Info("started")
+		logger.Info("started")
 	}
 
 	go func() {
@@ -241,16 +256,16 @@ func main() {
 		signal.Notify(c, syscall.SIGHUP)
 		for {
 			<-c
-			zap.Info("HUP received. Reload config")
+			logger.Info("HUP received. Reload config")
 			if err := app.ReloadConfig(); err != nil {
-				zap.Error("config reload failed", zap.Error(err.Error))
+				logger.Error("config reload failed", zap.Error(err.Error))
 			} else {
-				zap.Info("config successfully reloaded")
+				logger.Info("config successfully reloaded")
 			}
 		}
 	}()
 
 	app.Loop()
 
-	zap.Info("stopped")
+	logger.Info("stopped")
 }
