@@ -48,7 +48,8 @@ func NewWhisper(
 	schemas WhisperSchemas,
 	aggregation *WhisperAggregation,
 	recv func(chan bool) *points.Points,
-	confirm func(*points.Points)) *Whisper {
+	confirm func(*points.Points),
+	logger zap.Logger) *Whisper {
 
 	return &Whisper{
 		recv:                recv,
@@ -58,6 +59,7 @@ func NewWhisper(
 		workersCount:        1,
 		rootPath:            rootPath,
 		maxUpdatesPerSecond: 0,
+		logger:              logger,
 	}
 }
 

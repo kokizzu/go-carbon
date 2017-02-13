@@ -91,6 +91,19 @@ func Name(name string) Option {
 	}
 }
 
+// Logger creates option for New contructor
+func Logger(logger zap.Logger) Option {
+	return func(r Receiver) error {
+		if t, ok := r.(*TCP); ok {
+			t.logger = logger
+		}
+		if t, ok := r.(*UDP); ok {
+			t.logger = logger
+		}
+		return nil
+	}
+}
+
 func blackhole(p *points.Points) {}
 
 // New creates udp, tcp, pickle receiver

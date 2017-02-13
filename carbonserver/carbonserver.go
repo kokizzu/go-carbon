@@ -34,16 +34,17 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/uber-go/zap"
+
 	"github.com/NYTimes/gziphandler"
-	logger "github.com/Sirupsen/logrus"
 	trigram "github.com/dgryski/go-trigram"
 	"github.com/dgryski/httputil"
 	"github.com/gogo/protobuf/proto"
-	pickle "github.com/lomik/og-rek"
 	pb "github.com/lomik/go-carbon/carbonzipperpb"
 	"github.com/lomik/go-carbon/helper"
 	"github.com/lomik/go-carbon/points"
 	whisper "github.com/lomik/go-whisper"
+	pickle "github.com/lomik/og-rek"
 )
 
 type metricStruct struct {
@@ -77,6 +78,7 @@ type CarbonserverListener struct {
 	scanFrequency     time.Duration
 	metricsAsCounters bool
 	tcpListener       *net.TCPListener
+	logger            zap.Logger
 
 	fileIdx atomic.Value
 
@@ -95,6 +97,7 @@ func NewCarbonserverListener(cacheGetFunc func(key string) []points.Point) *Carb
 		// Config variables
 		metricsAsCounters: false,
 		cacheGet:          cacheGetFunc,
+		logger:            zap.New(zap.NullEncoder()),
 	}
 }
 
@@ -119,6 +122,9 @@ func (listener *CarbonserverListener) SetWriteTimeout(writeTimeout time.Duration
 func (listener *CarbonserverListener) SetMetricsAsCounters(metricsAsCounters bool) {
 	listener.metricsAsCounters = metricsAsCounters
 }
+func (listener *CarbonserverListener) SetLogger(logger zap.Logger) {
+	listener.logger = logger
+}
 
 func (listener *CarbonserverListener) CurrentFileIndex() *fileIndex {
 	p := listener.fileIdx.Load()
@@ -130,7 +136,7 @@ func (listener *CarbonserverListener) CurrentFileIndex() *fileIndex {
 func (listener *CarbonserverListener) UpdateFileIndex(fidx *fileIndex) { listener.fileIdx.Store(fidx) }
 
 func (listener *CarbonserverListener) fileListUpdater(dir string, tick <-chan time.Time, force <-chan struct{}, exit <-chan struct{}) {
-
+	logger := listener.logger
 	for {
 
 		select {
@@ -146,7 +152,7 @@ func (listener *CarbonserverListener) fileListUpdater(dir string, tick <-chan ti
 
 		err := filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
 			if err != nil {
-				logger.Infof("[carbonserver] error processing %q: %v", p, err)
+				logger.Info("error processing", zap.String("path", p), zap.Error(err))
 				return nil
 			}
 
@@ -157,16 +163,22 @@ func (listener *CarbonserverListener) fileListUpdater(dir string, tick <-chan ti
 			return nil
 		})
 
-		logger.Debugln("[carbonserver] file scan took", time.Since(t0), ",", len(files), "items")
+		fileScanRuntime := time.Since(t0)
+
 		t0 = time.Now()
-
 		idx := trigram.NewIndex(files)
-
-		logger.Debugln("[carbonserver] indexing took", time.Since(t0), len(idx), "trigrams")
+		indexingRuntime := time.Since(t0)
+		indexSize := len(idx)
 
 		pruned := idx.Prune(0.95)
 
-		logger.Debugln("[carbonserver] pruned", pruned, "common trigrams")
+		logger.Debug("file list updated",
+			zap.String("fileScanRuntime", fileScanRuntime.String()),
+			zap.Int("files", len(files)),
+			zap.String("indexingRuntime", indexingRuntime.String()),
+			zap.Int("indexSize", indexSize),
+			zap.Int("prunedTrigrams", pruned),
+		)
 
 		if err == nil {
 			listener.UpdateFileIndex(&fileIndex{idx, files})
@@ -307,6 +319,10 @@ func (listener *CarbonserverListener) findHandler(wr http.ResponseWriter, req *h
 	// URL: /metrics/find/?local=1&format=pickle&query=the.metric.path.with.glob
 
 	t0 := time.Now()
+	logger := listener.logger.With(
+		zap.String("url", req.URL.RequestURI()),
+		zap.String("peer", req.RemoteAddr),
+	)
 
 	atomic.AddUint64(&listener.metrics.FindRequests, 1)
 
@@ -316,8 +332,7 @@ func (listener *CarbonserverListener) findHandler(wr http.ResponseWriter, req *h
 
 	if format != "json" && format != "pickle" && format != "protobuf" {
 		atomic.AddUint64(&listener.metrics.FindErrors, 1)
-		logger.Infof("[carbonserver] dropping invalid uri (format=%s): %s",
-			format, req.URL.RequestURI())
+		logger.Info("invalid format", zap.String("format", format))
 		http.Error(wr, "Bad request (unsupported format)",
 			http.StatusBadRequest)
 		return
@@ -325,7 +340,7 @@ func (listener *CarbonserverListener) findHandler(wr http.ResponseWriter, req *h
 
 	if query == "" {
 		atomic.AddUint64(&listener.metrics.FindErrors, 1)
-		logger.Infof("[carbonserver] dropping invalid request (query=): %s", req.URL.RequestURI())
+		logger.Info("empty query")
 		http.Error(wr, "Bad request (no query)", http.StatusBadRequest)
 		return
 	}
@@ -353,8 +368,7 @@ func (listener *CarbonserverListener) findHandler(wr http.ResponseWriter, req *h
 		}
 		if err != nil {
 			atomic.AddUint64(&listener.metrics.FindErrors, 1)
-			logger.Infof("[carbonserver] failed to create %s data for glob %s: %s",
-				format, *response.Name, err)
+			logger.Info("response encode failed", zap.Error(err))
 			return
 		}
 		wr.Write(b)
