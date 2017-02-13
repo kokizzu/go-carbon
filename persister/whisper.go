@@ -1,6 +1,7 @@
 package persister
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,7 +138,7 @@ func store(p *Whisper, values *points.Points) {
 			zap.String("retention", schema.RetentionStr),
 			zap.String("schema", schema.Name),
 			zap.String("aggregation", aggr.name),
-			zap.String("xFilesFactor", aggr.xFilesFactor),
+			zap.Float64("xFilesFactor", aggr.xFilesFactor),
 			zap.String("method", aggr.aggregationMethodStr),
 		)
 
@@ -171,7 +172,7 @@ func store(p *Whisper, values *points.Points) {
 		if r := recover(); r != nil {
 			p.logger.Error("UpdateMany panic recovered",
 				zap.String("path", path),
-				zap.String("traceback", r),
+				zap.String("traceback", fmt.Sprint(r)),
 			)
 		}
 	}()

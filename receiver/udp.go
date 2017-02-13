@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/uber-go/zap"
+
 	"github.com/lomik/go-carbon/helper"
 	"github.com/lomik/go-carbon/points"
 )

@@ -18,6 +18,7 @@ type WriteoutQueue struct {
 	// p := cache.Pop(q.Metric)
 	queue   chan *points.Points
 	rebuild func(abort chan bool) chan bool // return chan waiting for complete
+	logger  zap.Logger
 }
 
 func NewWriteoutQueue(cache *Cache) *WriteoutQueue {

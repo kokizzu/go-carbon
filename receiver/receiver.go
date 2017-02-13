@@ -5,6 +5,8 @@ import (
 	"net"
 	"net/url"
 
+	"github.com/uber-go/zap"
+
 	"github.com/lomik/go-carbon/helper"
 	"github.com/lomik/go-carbon/points"
 )

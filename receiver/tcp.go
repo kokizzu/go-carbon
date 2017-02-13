@@ -3,6 +3,7 @@ package receiver
 import (
 	"bufio"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -72,7 +73,7 @@ func (rcv *TCP) HandleConnection(conn net.Conn) {
 		if err != nil {
 			if err == io.EOF {
 				if len(line) > 0 {
-					rcv.logger.Warn("unfinished line", zap.String("line", line))
+					rcv.logger.Warn("unfinished line", zap.String("line", string(line)))
 				}
 			} else {
 				atomic.AddUint32(&rcv.errors, 1)
@@ -96,7 +97,7 @@ func (rcv *TCP) handlePickle(conn net.Conn) {
 	framedConn, _ := framing.NewConn(conn, byte(4), binary.BigEndian)
 	defer func() {
 		if r := recover(); r != nil {
-			tcv.Error("panic recovered", zap.String("traceback", r))
+			rcv.logger.Error("panic recovered", zap.String("traceback", fmt.Sprint(r)))
 		}
 	}()
 
