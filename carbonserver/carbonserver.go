@@ -415,12 +415,12 @@ func (listener *CarbonserverListener) fetchHandler(wr http.ResponseWriter, req *
 	// URL: /render/?target=the.metric.name&format=pickle&from=1396008021&until=1396022421
 	t0 := time.Now()
 
-	atomic.AddUint64(&listener.metrics.RenderRequests, 1)
-
 	logger := listener.logger.With(
 		zap.String("url", req.URL.RequestURI()),
 		zap.String("peer", req.RemoteAddr),
 	)
+
+	atomic.AddUint64(&listener.metrics.RenderRequests, 1)
 
 	req.ParseForm()
 	metric := req.FormValue("target")
@@ -663,7 +663,7 @@ func (listener *CarbonserverListener) fetchData(metric string, fromTime, untilTi
 	var multi pb.MultiFetchResponse
 	for i, metric := range files {
 		if !leafs[i] {
-			logger.Debugf("[carbonserver] skipping directory = %q", metric)
+			listener.logger.Debug("skipping directory", zap.String("metric", metric))
 			// can't fetch a directory
 			continue
 		}
@@ -678,6 +678,11 @@ func (listener *CarbonserverListener) fetchData(metric string, fromTime, untilTi
 func (listener *CarbonserverListener) infoHandler(wr http.ResponseWriter, req *http.Request) {
 	// URL: /info/?target=the.metric.name&format=json
 
+	logger := listener.logger.With(
+		zap.String("url", req.URL.RequestURI()),
+		zap.String("peer", req.RemoteAddr),
+	)
+
 	atomic.AddUint64(&listener.metrics.InfoRequests, 1)
 	req.ParseForm()
 	metric := req.FormValue("target")
@@ -689,8 +694,7 @@ func (listener *CarbonserverListener) infoHandler(wr http.ResponseWriter, req *h
 
 	if format != "json" && format != "protobuf" {
 		atomic.AddUint64(&listener.metrics.InfoErrors, 1)
-		logger.Infof("[carbonserver] dropping invalid uri (format=%s): %s",
-			format, req.URL.RequestURI())
+		logger.Info("invalid format")
 		http.Error(wr, "Bad request (unsupported format)",
 			http.StatusBadRequest)
 		return
@@ -701,7 +705,7 @@ func (listener *CarbonserverListener) infoHandler(wr http.ResponseWriter, req *h
 
 	if err != nil {
 		atomic.AddUint64(&listener.metrics.NotFound, 1)
-		logger.Debugf("[carbonserver] failed to %s", err)
+		logger.Debug("open error", zap.Error(err))
 		http.Error(wr, "Metric not found", http.StatusNotFound)
 		return
 	}
@@ -737,12 +741,12 @@ func (listener *CarbonserverListener) infoHandler(wr http.ResponseWriter, req *h
 	}
 	if err != nil {
 		atomic.AddUint64(&listener.metrics.RenderErrors, 1)
-		logger.Infof("[carbonserver] failed to create %s data for %s: %s", format, path, err)
+		logger.Info("encode error", zap.Error(err))
 		return
 	}
 	wr.Write(b)
 
-	logger.Debugf("[carbonserver] served info for %s", metric)
+	logger.Debug("served")
 	return
 }
 
@@ -790,15 +794,16 @@ func (listener *CarbonserverListener) Stop() error {
 }
 
 func (listener *CarbonserverListener) Listen(listen string) error {
-	logger.Warnln("[carbonserver] carbonserver support is still experimental, use at your own risk")
-	logger.Infoln("[carbonserver] starting carbonserver")
+	logger := listener.logger
 
-	logger.Infof("[carbonserver] reading whisper files from: %s", listener.whisperData)
-
-	logger.Infof("[carbonserver] maximum brace expansion set to: %d", listener.maxGlobs)
+	logger.Warn("carbonserver support is still experimental, use at your own risk")
+	logger.Info("starting carbonserver",
+		zap.String("whisperData", listener.whisperData),
+		zap.Int("maxGlobs", listener.maxGlobs),
+		zap.String("scanFrequency", listener.scanFrequency.String()),
+	)
 
 	if listener.scanFrequency != 0 {
-		logger.Infoln("[carbonserver] use file cache with scan frequency", listener.scanFrequency)
 		force := make(chan struct{})
 		listener.exitChan = make(chan struct{})
 		go listener.fileListUpdater(listener.whisperData, time.Tick(listener.scanFrequency), force, listener.exitChan)
@@ -817,7 +822,7 @@ func (listener *CarbonserverListener) Listen(listen string) error {
 		fmt.Fprintln(w, "User-agent: *\nDisallow: /")
 	})
 
-	logger.Infof("[carbonserver] listening on %s", listen)
+	logger.Info(fmt.Sprintf("listening on %s", listen))
 	tcpAddr, err := net.ResolveTCPAddr("tcp", listen)
 	if err != nil {
 		return err
@@ -856,7 +861,10 @@ func (listener *CarbonserverListener) bucketRequestTimes(req *http.Request, t ti
 	} else {
 		// Too big? Increment overflow bucket and log
 		atomic.AddUint64(&listener.timeBuckets[listener.buckets], 1)
-		logger.Infof("[carbonserver] Slow Request: %s: %s", t.String(), req.URL.String())
+		listener.logger.Info("slow request",
+			zap.String("url", req.URL.RequestURI()),
+			zap.String("peer", req.RemoteAddr),
+		)
 	}
 }
 
