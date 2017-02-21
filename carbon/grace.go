@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/uber-go/zap"
+
 	"github.com/lomik/go-carbon/persister"
 	"github.com/lomik/go-carbon/points"
 )
@@ -52,7 +54,7 @@ func (app *App) DumpStop() error {
 		app.Persister = nil
 	}
 
-	logger := app.logger.With(zap.String("module", "app"))
+	logger := app.Logger.With(zap.String("module", "app"))
 	logger.Info("grace stop with dump inited")
 
 	filenamePostfix := fmt.Sprintf("%d.%d", os.Getpid(), time.Now().UnixNano())
@@ -92,7 +94,7 @@ func (app *App) DumpStop() error {
 	dumpWorktime := time.Since(dumpStart)
 
 	logger.Info("cache dump finished",
-		zap.Int("records", cacheSize),
+		zap.Int("records", int(cacheSize)),
 		zap.String("runtime", dumpWorktime.String()),
 		zap.Duration("runtime_ns", dumpWorktime),
 	)
@@ -130,7 +132,7 @@ func (app *App) RestoreFromFile(filename string, storeFunc func(*points.Points))
 	var pointsCount int
 	startTime := time.Now()
 
-	logger := app.logger.With(zap.String("module", "app"), zap.String("filename", filename))
+	logger := app.Logger.With(zap.String("module", "app"), zap.String("filename", filename))
 
 	logger.Info("restore started")
 
@@ -183,7 +185,7 @@ func (app *App) RestoreFromFile(filename string, storeFunc func(*points.Points))
 func (app *App) RestoreFromDir(dumpDir string, storeFunc func(*points.Points)) {
 	startTime := time.Now()
 
-	logger := app.logger.With(zap.String("module", "app"), zap.String("dir", dumpDir))
+	logger := app.Logger.With(zap.String("module", "app"), zap.String("dir", dumpDir))
 
 	defer func() {
 		finishTime := time.Now()
@@ -246,7 +248,7 @@ FilesLoop:
 
 		err = os.Remove(filename)
 		if err != nil {
-			zap.Error("remove failed", zap.String("filename", filename), zap.Error(err))
+			logger.Error("remove failed", zap.String("filename", filename), zap.Error(err))
 		}
 	}
 }

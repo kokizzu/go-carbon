@@ -43,7 +43,7 @@ func NewCollector(app *App) *Collector {
 		data:           make(chan *points.Points, 4096),
 		endpoint:       app.Config.Common.MetricEndpoint,
 		stats:          make([]statFunc, 0),
-		logger:         app.logger,
+		logger:         app.Logger.With(zap.String("module", "stat")),
 	}
 
 	c.Start()
@@ -51,13 +51,13 @@ func NewCollector(app *App) *Collector {
 	sendCallback := func(moduleName string) func(metric string, value float64) {
 		return func(metric string, value float64) {
 			key := fmt.Sprintf("%s.%s.%s", c.graphPrefix, moduleName, metric)
-			c.logger.Info("stat", zap.String("key", key), zap.Double("value", value))
+			c.logger.Info("collected", zap.String("key", key), zap.Float64("value", value))
 			select {
 			case c.data <- points.NowPoint(key, value):
 				// pass
 			default:
 				c.logger.Warn("send queue is full. metric dropped",
-					zap.String("key", key), zap.Double("value", value))
+					zap.String("key", key), zap.Float64("value", value))
 			}
 		}
 	}

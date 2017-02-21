@@ -28,7 +28,7 @@ type App struct {
 	Persister      *persister.Whisper
 	Carbonserver   *carbonserver.CarbonserverListener
 	Collector      *Collector // (!!!) Should be re-created on every change config/modules
-	logger         zap.Logger
+	Logger         zap.Logger
 	exit           chan bool
 }
 
@@ -213,6 +213,7 @@ func (app *App) startPersister() {
 			app.Config.Whisper.Aggregation,
 			app.Cache.WriteoutQueue().GetNotConfirmed,
 			app.Cache.Confirm,
+			app.Logger,
 		)
 		p.SetMaxUpdatesPerSecond(app.Config.Whisper.MaxUpdatesPerSecond)
 		p.SetSparse(app.Config.Whisper.Sparse)
@@ -239,7 +240,7 @@ func (app *App) Start(logger zap.Logger) (err error) {
 
 	runtime.GOMAXPROCS(conf.Common.MaxCPU)
 
-	core := cache.New()
+	core := cache.New(app.Logger.With(zap.String("module", "cache")))
 	core.SetMaxSize(conf.Cache.MaxSize)
 	core.SetWriteStrategy(conf.Cache.WriteStrategy)
 
@@ -325,7 +326,10 @@ func (app *App) Start(logger zap.Logger) (err error) {
 			return
 		}
 
-		carbonlink := cache.NewCarbonlinkListener(core)
+		carbonlink := cache.NewCarbonlinkListener(
+			core,
+			app.Logger.With(zap.String("module", "carbonlink")),
+		)
 		carbonlink.SetReadTimeout(conf.Carbonlink.ReadTimeout.Value())
 		// carbonlink.SetQueryTimeout(conf.Carbonlink.QueryTimeout.Value())
 
