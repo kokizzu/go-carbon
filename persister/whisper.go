@@ -52,6 +52,10 @@ func NewWhisper(
 	confirm func(*points.Points),
 	logger zap.Logger) *Whisper {
 
+	if logger == nil {
+		logger = zap.New(zap.NullEncoder())
+	}
+
 	return &Whisper{
 		recv:                recv,
 		confirm:             confirm,

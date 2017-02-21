@@ -236,6 +236,11 @@ func (app *App) Start(logger zap.Logger) (err error) {
 		}
 	}()
 
+	if logger == nil {
+		logger = zap.New(zap.NullEncoder())
+	}
+	app.Logger = logger
+
 	conf := app.Config
 
 	runtime.GOMAXPROCS(conf.Common.MaxCPU)

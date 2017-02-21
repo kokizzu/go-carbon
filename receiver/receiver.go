@@ -95,6 +95,10 @@ func Name(name string) Option {
 
 // Logger creates option for New contructor
 func Logger(logger zap.Logger) Option {
+	if logger == nil {
+		logger = zap.New(zap.NullEncoder())
+	}
+
 	return func(r Receiver) error {
 		if t, ok := r.(*TCP); ok {
 			t.logger = logger
