@@ -14,9 +14,11 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/lomik/go-carbon/carbon"
+	"github.com/lomik/zapwriter"
 	daemon "github.com/sevlyar/go-daemon"
 	"github.com/uber-go/zap"
+
+	"github.com/lomik/go-carbon/carbon"
 
 	_ "net/http/pprof"
 )
@@ -44,14 +46,14 @@ func loggingLevel(cfg *carbon.Config) (zap.Level, error) {
 
 	if cfg.Common.LogLevel != "" {
 		log.Println("[WARNING] `common.log-level` is DEPRICATED. Use `logging` config section")
-		if err = logLevel.UnmarshalText([]byte(cfg.Common.LogLevel)); err != nil {
-			return nil, err
+		if err := logLevel.UnmarshalText([]byte(cfg.Common.LogLevel)); err != nil {
+			return logLevel, err
 		}
 		return logLevel, nil
 	}
 
-	if err = logLevel.UnmarshalText([]byte(cfg.Logging.Level)); err != nil {
-		return nil, err
+	if err := logLevel.UnmarshalText([]byte(cfg.Logging.Level)); err != nil {
+		return logLevel, err
 	}
 	return logLevel, nil
 }
@@ -104,13 +106,13 @@ func loggingPrepare(filename string, owner *user.User) error {
 }
 
 func loggingInit(filename string, level zap.Level) (zap.Logger, error) {
-	zapOutput, err := zapwriter.New(cfg.Logging.File)
+	zapOutput, err := zapwriter.New(filename)
 	if err != nil {
 		return nil, err
 	}
 
 	dynamicLevel := zap.DynamicLevel()
-	dynamicLevel.SetLevel(logLevel)
+	dynamicLevel.SetLevel(level)
 
 	logger := zap.New(
 		zapwriter.NewMixedEncoder(),
@@ -202,12 +204,12 @@ func main() {
 		if runAsUser != nil {
 			uid, err := strconv.ParseInt(runAsUser.Uid, 10, 0)
 			if err != nil {
-				logger.Fatal(err)
+				logger.Fatal(err.Error())
 			}
 
 			gid, err := strconv.ParseInt(runAsUser.Gid, 10, 0)
 			if err != nil {
-				logger.Fatal(err)
+				logger.Fatal(err.Error())
 			}
 
 			context.Credential = &syscall.Credential{
@@ -232,12 +234,12 @@ func main() {
 	if cfg.Pprof.Enabled {
 		_, err = httpServe(cfg.Pprof.Listen)
 		if err != nil {
-			logger.Fatal(err)
+			logger.Fatal(err.Error())
 		}
 	}
 
 	if err = app.Start(logger); err != nil {
-		logger.Fatal(err)
+		logger.Fatal(err.Error())
 	} else {
 		logger.Info("started")
 	}
@@ -258,7 +260,7 @@ func main() {
 			<-c
 			logger.Info("HUP received. Reload config")
 			if err := app.ReloadConfig(); err != nil {
-				logger.Error("config reload failed", zap.Error(err.Error))
+				logger.Error("config reload failed", zap.Error(err))
 			} else {
 				logger.Info("config successfully reloaded")
 			}

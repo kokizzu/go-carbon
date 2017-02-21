@@ -112,6 +112,11 @@ type dumpConfig struct {
 	RestorePerSecond int    `toml:"restore-per-second"`
 }
 
+type loggingConfig struct {
+	File  string `toml:"file"`
+	Level string `toml:"level"`
+}
+
 // Config ...
 type Config struct {
 	Common       commonConfig       `toml:"common"`
@@ -124,14 +129,13 @@ type Config struct {
 	Carbonserver carbonserverConfig `toml:"carbonserver"`
 	Dump         dumpConfig         `toml:"dump"`
 	Pprof        pprofConfig        `toml:"pprof"`
+	Logging      loggingConfig      `toml:"logging"`
 }
 
 // NewConfig ...
 func NewConfig() *Config {
 	cfg := &Config{
 		Common: commonConfig{
-			Logfile:     "/var/log/go-carbon/go-carbon.log",
-			LogLevel:    "info",
 			GraphPrefix: "carbon.agents.{host}",
 			MetricInterval: &Duration{
 				Duration: time.Minute,
@@ -195,6 +199,10 @@ func NewConfig() *Config {
 			Enabled: false,
 		},
 		Dump: dumpConfig{},
+		Logging: loggingConfig{
+			File:  "/var/log/go-carbon/go-carbon.log",
+			Level: "info",
+		},
 	}
 
 	return cfg
