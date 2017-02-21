@@ -402,7 +402,12 @@ func (listener *CarbonserverListener) findHandler(wr http.ResponseWriter, req *h
 		atomic.AddUint64(&listener.metrics.FindZero, 1)
 	}
 
-	logger.Debugf("[carbonserver] find: %d hits for %s in %v", len(files), req.FormValue("query"), time.Since(t0))
+	d := time.Since(t0)
+	logger.Debug("find success",
+		zap.Int("files", len(files)),
+		zap.String("runtime", d.String()),
+		zap.Duration("runtime_ns", d),
+	)
 	return
 }
 
@@ -411,6 +416,12 @@ func (listener *CarbonserverListener) fetchHandler(wr http.ResponseWriter, req *
 	t0 := time.Now()
 
 	atomic.AddUint64(&listener.metrics.RenderRequests, 1)
+
+	logger := listener.logger.With(
+		zap.String("url", req.URL.RequestURI()),
+		zap.String("peer", req.RemoteAddr),
+	)
+
 	req.ParseForm()
 	metric := req.FormValue("target")
 	format := req.FormValue("format")
@@ -422,14 +433,16 @@ func (listener *CarbonserverListener) fetchHandler(wr http.ResponseWriter, req *
 		if r := recover(); r != nil {
 			var buf [4096]byte
 			runtime.Stack(buf[:], false)
-			logger.Infof("[carbonserver] panic handling request: %v\n%s\n%s", r, req.RequestURI, string(buf[:]))
+			logger.Info("panic recovered",
+				zap.String("error", fmt.Sprintf("%v", r)),
+				zap.String("stack", string(buf[:])),
+			)
 		}
 	}()
 
 	if format != "json" && format != "pickle" && format != "protobuf" {
 		atomic.AddUint64(&listener.metrics.RenderErrors, 1)
-		logger.Infof("[carbonserver] dropping invalid uri (format=%s): %s",
-			format, req.URL.RequestURI())
+		logger.Info("invalid format")
 		http.Error(wr, "Bad request (unsupported format)",
 			http.StatusBadRequest)
 		return
@@ -439,13 +452,13 @@ func (listener *CarbonserverListener) fetchHandler(wr http.ResponseWriter, req *
 
 	i, err := strconv.Atoi(from)
 	if err != nil {
-		logger.Infof("[carbonserver] fromTime (%s) invalid: %s (in %s)", from, err, req.URL.RequestURI())
+		logger.Info("invalid fromTime", zap.Error(err))
 		badTime = true
 	}
 	fromTime := int32(i)
 	i, err = strconv.Atoi(until)
 	if err != nil {
-		logger.Infof("[carbonserver] untilTime (%s) invalid: %s (in %s)", from, err, req.URL.RequestURI())
+		logger.Info("invalid untilTime", zap.Error(err))
 		badTime = true
 	}
 	untilTime := int32(i)
@@ -459,7 +472,7 @@ func (listener *CarbonserverListener) fetchHandler(wr http.ResponseWriter, req *
 	multi, err := listener.fetchData(metric, fromTime, untilTime)
 	if err != nil {
 		atomic.AddUint64(&listener.metrics.RenderErrors, 1)
-		logger.Infof("[carbonserver] %s", err)
+		logger.Info("fetchData error", zap.Error(err))
 		http.Error(wr, fmt.Sprintf("Bad request (%s)", err),
 			http.StatusBadRequest)
 	}
@@ -513,12 +526,19 @@ func (listener *CarbonserverListener) fetchHandler(wr http.ResponseWriter, req *
 
 	if err != nil {
 		atomic.AddUint64(&listener.metrics.RenderErrors, 1)
-		logger.Infof("[carbonserver] failed to create %s data for %s: %s", format, "<metric>", err)
+		logger.Info("encode response failed", zap.String("format", format), zap.Error(err))
 		return
 	}
 	wr.Write(b)
 
-	logger.Debugf("[carbonserver] fetch: served %q from %s to %s in %v", metric, from, until, time.Since(t0))
+	runtime := time.Since(t0)
+	logger.Debug("fetch served",
+		zap.String("metric", metric),
+		zap.String("from", from),
+		zap.String("until", until),
+		zap.String("runtime", runtime.String()),
+		zap.Duration("runtime_ns", runtime),
+	)
 
 }
 
@@ -532,9 +552,15 @@ func (listener *CarbonserverListener) fetchSingleMetric(metric string, fromTime,
 		// the FE/carbonzipper often requests metrics we don't have
 		// We shouldn't really see this any more -- expandGlobs() should filter them out
 		atomic.AddUint64(&listener.metrics.NotFound, 1)
-		logger.Infof("[carbonserver] error opening %q: %v", path, err)
+		listener.logger.Info("open error", zap.String("path", path), zap.Error(err))
 		return nil, errors.New("Can't open metric")
 	}
+
+	logger := listener.logger.With(
+		zap.String("path", path),
+		zap.Int("fromTime", int(fromTime)),
+		zap.Int("untilTime", int(untilTime)),
+	)
 
 	retentions := w.Retentions()
 	now := int32(time.Now().Unix())
@@ -549,13 +575,16 @@ func (listener *CarbonserverListener) fetchSingleMetric(metric string, fromTime,
 
 	if step == 0 {
 		atomic.AddUint64(&listener.metrics.RenderErrors, 1)
-		logger.Infof("[carbonserver] Can't find proper archive for the request for metric %q", path)
+		logger.Info("can't find proper archive for the request")
 		return nil, errors.New("Can't find proper archive")
 	}
 
 	var cacheData []points.Point
 	if step != bestStep {
-		logger.Debugf("[carbonserver] Cache is not supported for this query (required step != best step). path=%q fromTime=%v untilTime=%v step=%v bestStep=%v", path, fromTime, untilTime, step, bestStep)
+		logger.Debug("cache is not supported for this query (required step != best step)",
+			zap.Int("step", int(step)),
+			zap.Int("bestStep", int(bestStep)),
+		)
 	} else {
 		// query cache
 		cacheStartTime := time.Now()
@@ -564,21 +593,21 @@ func (listener *CarbonserverListener) fetchSingleMetric(metric string, fromTime,
 		atomic.AddUint64(&listener.metrics.CacheWaitTimeFetchNS, waitTime)
 	}
 
-	logger.Debugf("[carbonserver] fetching disk metric=%v from=%v until=%v", metric, fromTime, untilTime)
+	logger.Debug("fetching disk metric")
 	atomic.AddUint64(&listener.metrics.DiskRequests, 1)
 	diskStartTime := time.Now()
 	points, err := w.Fetch(int(fromTime), int(untilTime))
 	w.Close()
 	if err != nil {
 		atomic.AddUint64(&listener.metrics.RenderErrors, 1)
-		logger.Infof("[carbonserver] failed to fetch points from %s: %s", path, err)
+		logger.Info("failed to fetch points", zap.Error(err))
 		return nil, errors.New("failed to fetch points")
 	}
 
 	// Should never happen, because we have a check for proper archive now
 	if points == nil {
 		atomic.AddUint64(&listener.metrics.RenderErrors, 1)
-		logger.Infof("[carbonserver] Metric time range not found: metric=%s from=%d to=%d ", metric, fromTime, untilTime)
+		logger.Info("metric time range not found")
 		return nil, errors.New("time range not found")
 	}
 	atomic.AddUint64(&listener.metrics.MetricsReturned, 1)
