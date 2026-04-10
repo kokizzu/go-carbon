@@ -136,7 +136,8 @@ func (d *Declarations) LookupEnumIdent(name string) (protoreflect.EnumType, bool
 }
 
 func (d *Declarations) declareIdent(name string, t *expr.Type) error {
-	if _, ok := d.idents[name]; ok {
+	newIdent := NewIdentDeclaration(name, t)
+	if ident, ok := d.idents[name]; ok && !proto.Equal(newIdent, ident) {
 		return fmt.Errorf("redeclaration of %s", name)
 	}
 	d.idents[name] = NewIdentDeclaration(name, t)
@@ -218,5 +219,23 @@ func (d *Declarations) declare(decl *expr.Decl) error {
 		return d.declareIdent(decl.GetName(), decl.GetIdent().GetType())
 	default:
 		return fmt.Errorf("unsupported declaration kind")
+	}
+}
+
+// merge merges the given declarations into the current declarations.
+// Given declarations take precedence over current declarations in case
+// of conflicts (such as same identifier name but different type or same function name but different definition).
+func (d *Declarations) merge(decl *Declarations) {
+	if decl == nil {
+		return
+	}
+	for name, ident := range decl.idents {
+		d.idents[name] = ident
+	}
+	for name, function := range decl.functions {
+		d.functions[name] = function
+	}
+	for name, enum := range decl.enums {
+		d.enums[name] = enum
 	}
 }

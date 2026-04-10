@@ -3,7 +3,7 @@ module github.com/go-graphite/go-carbon
 go 1.25.0
 
 require (
-	cloud.google.com/go/pubsub v1.50.1
+	cloud.google.com/go/pubsub v1.50.2
 	github.com/BurntSushi/toml v1.6.0
 	github.com/IBM/sarama v1.47.0
 	github.com/NYTimes/gziphandler v1.1.1
@@ -41,12 +41,12 @@ require (
 )
 
 require (
-	cloud.google.com/go v0.121.6 // indirect
+	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.20.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/iam v1.5.3 // indirect
-	cloud.google.com/go/pubsub/v2 v2.0.0 // indirect
+	cloud.google.com/go/pubsub/v2 v2.4.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -76,7 +76,7 @@ require (
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
-	go.einride.tech/aip v0.73.0 // indirect
+	go.einride.tech/aip v0.83.0 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0 // indirect
