@@ -151,7 +151,7 @@ func (listener *CarbonserverListener) findHandler(wr http.ResponseWriter, req *h
 		var code int
 		var reason string
 		var nf errorNotFound
-		if errors.Is(err, &nf) {
+		if errors.As(err, &nf) {
 			reason = "Not Found"
 			code = http.StatusNotFound
 		} else {
