@@ -11,3 +11,4 @@ sha256sum
 *.rpm
 *.deb
 /local/
+.omc
