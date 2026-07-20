@@ -5,6 +5,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -53,6 +54,10 @@ type Context struct {
 	rpipe, wpipe *os.File
 }
 
+func (d *Context) SetLogFile(fd *os.File) {
+	d.logFile = fd
+}
+
 func (d *Context) reborn() (child *os.Process, err error) {
 	if !WasReborn() {
 		child, err = d.parent()
@@ -70,10 +75,13 @@ func (d *Context) search() (daemon *os.Process, err error) {
 		}
 		daemon, err = os.FindProcess(pid)
 		if err == nil && daemon != nil {
-			// Send a test signal to test if this daemon is actually alive or dead
-			// An error means it is dead
+
+			// Send a test signal to test if this daemon is actually alive or dead.
+			// An error means it is dead also remove residual Pid File.
 			if daemon.Signal(syscall.Signal(0)) != nil {
+				os.Remove(d.PidFileName)
 				daemon = nil
+				return nil, errors.New("daemon: search process doesn't exist")
 			}
 		}
 	}
@@ -110,10 +118,7 @@ func (d *Context) parent() (child *os.Process, err error) {
 
 	d.rpipe.Close()
 	encoder := json.NewEncoder(d.wpipe)
-	if err = encoder.Encode(d); err != nil {
-		return
-	}
-	_, err = fmt.Fprint(d.wpipe, "\n\n")
+	err = encoder.Encode(d)
 	return
 }
 

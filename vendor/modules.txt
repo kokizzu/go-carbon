@@ -288,8 +288,8 @@ github.com/prometheus/procfs/internal/util
 # github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9
 ## explicit
 github.com/rcrowley/go-metrics
-# github.com/sevlyar/go-daemon v0.1.6
-## explicit
+# github.com/sevlyar/go-daemon v0.1.7
+## explicit; go 1.13
 github.com/sevlyar/go-daemon
 # github.com/stretchr/testify v1.11.1
 ## explicit; go 1.17
