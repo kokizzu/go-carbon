@@ -3,6 +3,7 @@ package daemon
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -73,7 +74,7 @@ func ReadPidFile(name string) (pid int, err error) {
 
 // WritePid writes current process id to an open file.
 func (file *LockFile) WritePid() (err error) {
-	if _, err = file.Seek(0, os.SEEK_SET); err != nil {
+	if _, err = file.Seek(0, io.SeekStart); err != nil {
 		return
 	}
 	var fileLen int
@@ -90,7 +91,7 @@ func (file *LockFile) WritePid() (err error) {
 // ReadPid reads process id from file and returns pid.
 // If unable read from a file, returns error.
 func (file *LockFile) ReadPid() (pid int, err error) {
-	if _, err = file.Seek(0, os.SEEK_SET); err != nil {
+	if _, err = file.Seek(0, io.SeekStart); err != nil {
 		return
 	}
 	_, err = fmt.Fscan(file, &pid)
@@ -100,7 +101,6 @@ func (file *LockFile) ReadPid() (pid int, err error) {
 // Remove removes lock, closes and removes an open file.
 func (file *LockFile) Remove() error {
 	defer file.Close()
-
 	if err := file.Unlock(); err != nil {
 		return err
 	}

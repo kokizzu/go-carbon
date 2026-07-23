@@ -24,7 +24,7 @@ require (
 	github.com/lomik/stop v0.0.0-20161127103810-188e98d969bd
 	github.com/lomik/zapwriter v0.0.0-20210624082824-c1161d1eb463
 	github.com/prometheus/client_golang v1.23.2
-	github.com/sevlyar/go-daemon v0.1.6
+	github.com/sevlyar/go-daemon v0.1.7
 	github.com/stretchr/testify v1.11.1
 	github.com/syndtr/goleveldb v1.0.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
