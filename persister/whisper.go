@@ -38,7 +38,7 @@ type Whisper struct {
 	pop                 func(string) (*points.Points, bool)
 	confirm             func(*points.Points)
 	popConfirm          func(string) (*points.Points, bool)
-	add                 func(*points.Points)
+	requeue             func(*points.Points)
 	tagsEnabled         bool
 	taggedFn            func(string, bool)
 	schemas             WhisperSchemas
@@ -114,15 +114,13 @@ func NewWhisper(
 	recv func(chan bool) string,
 	pop func(string) (*points.Points, bool),
 	confirm func(*points.Points),
-	popConfirm func(string) (*points.Points, bool),
-	add func(*points.Points)) *Whisper {
+	popConfirm func(string) (*points.Points, bool)) *Whisper {
 
 	return &Whisper{
 		recv:         recv,
 		pop:          pop,
 		confirm:      confirm,
 		popConfirm:   popConfirm,
-		add:          add,
 		schemas:      schemas,
 		aggregation:  aggregation,
 		workersCount: 1,
@@ -198,6 +196,11 @@ func (p *Whisper) SetFLock(flock bool) {
 
 func (p *Whisper) SetCompressed(compressed bool) {
 	p.compressed = compressed
+}
+
+// SetRequeue configures how failed writes are returned to the live cache.
+func (p *Whisper) SetRequeue(requeue func(*points.Points)) {
+	p.requeue = requeue
 }
 
 // EnableOutOfOrder diverts points that the compressed format rejects as too old
@@ -535,16 +538,8 @@ func (p *Whisper) store(metric string) {
 
 	// start = time.Now()
 	if err := p.updateMany(w, path, points); err != nil {
-		// pop() already took these out of the cache's live map and parked them
-		// in its not-confirmed list, where only confirm() releases them. Add
-		// them back first so they stay visible to readers, then confirm, so the
-		// next writeout retries the write instead of the batch being pinned in
-		// not-confirmed for the lifetime of the process.
-		if p.add != nil {
-			p.add(values)
-		}
-		if p.confirm != nil {
-			p.confirm(values)
+		if p.requeue != nil {
+			p.requeue(values)
 		}
 
 		return

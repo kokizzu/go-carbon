@@ -585,9 +585,10 @@ path = "/var/lib/graphite/dump/"
 # With whisper compressed = true the dump is restored before the receivers start
 # listening, so replayed points cannot fall behind a block watermark that live
 # traffic has already advanced. A non-zero limit therefore delays startup by
-# roughly (dumped points / restore-per-second) seconds, during which nothing is
-# accepted: keep it high enough that a restart finishes inside whatever grace
-# period your health check or supervisor allows.
+# roughly (dumped points / restore-per-second) seconds plus the time needed to
+# persist them, during which nothing is accepted: keep it high enough that a
+# restart finishes inside whatever grace period your health check or supervisor
+# allows.
 restore-per-second = 0
 
 [pprof]

@@ -246,7 +246,6 @@ type CarbonserverListener struct {
 	flock             bool
 	compressed        bool
 	removeEmptyFile   bool
-	outOfOrder        bool
 
 	maxMetricsGlobbed      int
 	maxMetricsRendered     int
@@ -563,9 +562,6 @@ func (listener *CarbonserverListener) SetCompressed(compressed bool) {
 }
 func (listener *CarbonserverListener) SetRemoveEmptyFile(remove bool) {
 	listener.removeEmptyFile = remove
-}
-func (listener *CarbonserverListener) SetOutOfOrder(enabled bool) {
-	listener.outOfOrder = enabled
 }
 func (listener *CarbonserverListener) SetMetricsAsCounters(metricsAsCounters bool) {
 	listener.metricsAsCounters = metricsAsCounters
@@ -1111,19 +1107,11 @@ func (listener *CarbonserverListener) updateFileList(dir string, cacheMetricName
 						m = m[1 : len(m)-4]
 						_, _, dataPoints = listener.estimateSize(m)
 					}
-					if listener.outOfOrder {
-						var sizeErr error
-						logicalSize, physicalSize, sizeErr = metricFileSizes(p, info)
-						if sizeErr != nil {
-							logger.Info("failed to stat out-of-order sidecar",
-								zap.String("path", whisper.OutOfOrderSidecarPath(p)), zap.Error(sizeErr))
-						}
-					} else {
-						logicalSize = info.Size()
-						physicalSize = logicalSize
-						if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-							physicalSize = stat.Blocks * 512
-						}
+					var sizeErr error
+					logicalSize, physicalSize, sizeErr = metricFileSizes(p, info)
+					if sizeErr != nil {
+						logger.Info("failed to stat out-of-order sidecar",
+							zap.String("path", whisper.OutOfOrderSidecarPath(p)), zap.Error(sizeErr))
 					}
 				}
 

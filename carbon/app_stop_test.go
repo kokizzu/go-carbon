@@ -1,6 +1,7 @@
 package carbon
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -64,7 +65,8 @@ func TestRestoreStartupOrdering(t *testing.T) {
 				}
 				app.Config.Dump.Enabled = true
 				app.Config.Dump.Path = root
-				app.Config.Dump.RestorePerSecond = 1
+				app.Config.Dump.RestorePerSecond = 0
+				app.Config.Whisper.MaxUpdatesPerSecond = 10
 				app.Config.Udp.Enabled = false
 				app.Config.Tcp.Enabled = false
 				app.Config.Pickle.Enabled = false
@@ -72,13 +74,18 @@ func TestRestoreStartupOrdering(t *testing.T) {
 				app.Config.Carbonlink.Enabled = false
 
 				dump := filepath.Join(root, "input.1.1")
-				assert.NoError(t, os.WriteFile(dump, []byte("restore.test 1 1700000000\n"), 0o600))
+				now := time.Now().Unix()
+				data := fmt.Sprintf("restore.one 1 %d\nrestore.two 2 %d\n", now, now)
+				assert.NoError(t, os.WriteFile(dump, []byte(data), 0o600))
 				assert.NoError(t, app.Start())
 				defer app.Stop()
 
 				_, err := os.Stat(dump)
 				if tt.globalCompressed || tt.schemaCompressed {
 					assert.ErrorIs(t, err, os.ErrNotExist)
+					assert.True(t, app.Cache.IsEmpty(), "restored cwhisper data must be persisted before receivers start")
+					_, err = os.Stat(filepath.Join(root, "restore", "two.wsp"))
+					assert.NoError(t, err)
 					return
 				}
 				assert.NoError(t, err)

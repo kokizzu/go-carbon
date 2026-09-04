@@ -18,10 +18,7 @@ import (
 
 // fakeCache is the minimum of cache.Cache that store() actually uses.
 //
-// pop and confirm mirror cache.PopNotConfirmed/cache.Confirm: pop parks the
-// batch in notConfirmed, where it stays visible to readers, and only confirm
-// releases it. A batch that is neither confirmed nor re-added therefore shows up
-// as a permanently non-empty notConfirmed, exactly as it would in cache.Cache.
+// pop, confirm, and requeue mirror the cache's in-flight write lifecycle.
 type fakeCache struct {
 	mu           sync.Mutex
 	data         map[string]*points.Points
@@ -58,18 +55,27 @@ func (c *fakeCache) pop(metric string) (*points.Points, bool) {
 	return p, true
 }
 
-// addPoints stands in for cache.Add, which is how store() puts a failed batch
-// back for the next writeout to retry.
-func (c *fakeCache) addPoints(p *points.Points) {
+func (c *fakeCache) requeue(p *points.Points) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	found := false
+	for i, np := range c.notConfirmed {
+		if np == p {
+			c.notConfirmed = append(c.notConfirmed[:i], c.notConfirmed[i+1:]...)
+			found = true
+			break
+		}
+	}
+	if !found {
+		return
+	}
 
 	if c.data == nil {
 		c.data = map[string]*points.Points{}
 	}
 	if existing, ok := c.data[p.Metric]; ok {
-		existing.Data = append(existing.Data, p.Data...)
-		return
+		p.Data = append(p.Data, existing.Data...)
 	}
 	c.data[p.Metric] = p
 }
@@ -133,8 +139,8 @@ func newOOOTestPersister(t *testing.T, dataDir string, cache *fakeCache) *Whispe
 		cache.pop,
 		cache.confirm,
 		cache.pop,
-		cache.addPoints,
 	)
+	p.SetRequeue(cache.requeue)
 	p.SetCompressed(true)
 	p.EnableOutOfOrder(100, 1<<30)
 	// Start() would also spawn workers; the tests drive store() directly
@@ -330,6 +336,9 @@ func TestStoreRetriesFailedOutOfOrderWrite(t *testing.T) {
 
 	if got := p.committedPoints; got != 2 {
 		t.Errorf("committedPoints = %d; want 2", got)
+	}
+	if got := cache.confirmedPoints(); got != 2 {
+		t.Errorf("confirmed points after failed write = %d; want 2", got)
 	}
 	if got := cache.notConfirmedPoints(); got != 0 {
 		t.Errorf("not-confirmed points after failed write = %d; want 0 (batch leaked)", got)

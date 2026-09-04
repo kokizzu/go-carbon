@@ -49,7 +49,7 @@ func TestGracefullyStop(t *testing.T) {
 
 		qa.Root(t, func(root string) {
 			recv, pop := makeRecvPopFromChan(ch)
-			p := NewWhisper(root, nil, nil, recv, pop, nil, nil, nil)
+			p := NewWhisper(root, nil, nil, recv, pop, nil, nil)
 			p.SetWorkers(workers)
 
 			storeWait := make(chan bool)
@@ -111,7 +111,7 @@ func TestStopEmptyThrottledPersister(t *testing.T) {
 
 				ch := make(chan *points.Points, 10)
 				recv, pop := makeRecvPopFromChan(ch)
-				p := NewWhisper(root, nil, nil, recv, pop, nil, nil, nil)
+				p := NewWhisper(root, nil, nil, recv, pop, nil, nil)
 				p.SetWorkers(workers)
 
 				p.mockStore = func() (StoreFunc, func()) {

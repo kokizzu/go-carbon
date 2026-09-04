@@ -219,22 +219,43 @@ func (c *Cache) Get(key string) []points.Point {
 }
 
 func (c *Cache) Confirm(p *points.Points) {
-	var i, j int
 	shard := c.GetShard(p.Metric)
 
 	shard.mu.Lock()
-	for i = 0; i < shard.notConfirmedUsed; i++ {
-		if shard.notConfirmed[i] == p {
-			shard.notConfirmed[i] = nil
-
-			for j = i + 1; j < shard.notConfirmedUsed; j++ {
-				shard.notConfirmed[j-1] = shard.notConfirmed[j]
-			}
-
-			shard.notConfirmedUsed--
-		}
-	}
+	removeNotConfirmed(shard, p)
 	shard.mu.Unlock()
+}
+
+func removeNotConfirmed(shard *Shard, p *points.Points) bool {
+	for i := 0; i < shard.notConfirmedUsed; i++ {
+		if shard.notConfirmed[i] != p {
+			continue
+		}
+
+		copy(shard.notConfirmed[i:], shard.notConfirmed[i+1:shard.notConfirmedUsed])
+		shard.notConfirmedUsed--
+		shard.notConfirmed[shard.notConfirmedUsed] = nil
+		return true
+	}
+	return false
+}
+
+// Requeue moves a failed write from the in-flight list back to the live cache.
+func (c *Cache) Requeue(p *points.Points) {
+	shard := c.GetShard(p.Metric)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	if !removeNotConfirmed(shard, p) {
+		return
+	}
+
+	count := len(p.Data)
+	if current, exists := shard.items[p.Metric]; exists {
+		p.Data = append(p.Data, current.Data...)
+	}
+	shard.items[p.Metric] = p
+	atomic.AddInt64(&c.stat.size, int64(count))
 }
 
 func (c *Cache) Len() int32 {
@@ -253,10 +274,23 @@ func (c *Cache) NotConfirmedLength() int32 {
 	for i := 0; i < shardCount; i++ {
 		shard := c.data[i]
 		shard.mu.RLock()
-		l += len(shard.notConfirmed)
+		l += shard.notConfirmedUsed
 		shard.mu.RUnlock()
 	}
 	return int32(l)
+}
+
+// IsEmpty reports whether the cache has neither queued nor in-flight points.
+func (c *Cache) IsEmpty() bool {
+	for _, shard := range c.data {
+		shard.mu.RLock()
+		empty := len(shard.items) == 0 && shard.notConfirmedUsed == 0
+		shard.mu.RUnlock()
+		if !empty {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Cache) Size() int64 {

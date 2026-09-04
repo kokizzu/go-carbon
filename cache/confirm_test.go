@@ -60,6 +60,43 @@ func TestInFlight(t *testing.T) {
 	}
 }
 
+func TestRequeueFailedWrite(t *testing.T) {
+	c := New()
+	if !c.IsEmpty() {
+		t.Fatal("new cache is not empty")
+	}
+
+	c.Add(points.OnePoint("hello.world", 42, 10))
+	failed, ok := c.PopNotConfirmed("hello.world")
+	if !ok {
+		t.Fatal("failed to pop point")
+	}
+	c.Add(points.OnePoint("hello.world", 43, 11))
+	c.SetThrottle(func(*points.Points, bool) bool { return true })
+
+	c.Requeue(failed)
+
+	data := c.Get("hello.world")
+	if len(data) != 2 || data[0].Value != 42 || data[1].Value != 43 {
+		t.Fatalf("requeued data = %+v; want failed point before newer point", data)
+	}
+	if got := c.Size(); got != 2 {
+		t.Fatalf("cache size = %d; want 2", got)
+	}
+	if got := c.NotConfirmedLength(); got != 0 {
+		t.Fatalf("not-confirmed batches = %d; want 0", got)
+	}
+
+	combined, ok := c.PopNotConfirmed("hello.world")
+	if !ok || c.IsEmpty() {
+		t.Fatal("in-flight batch must keep the cache non-empty")
+	}
+	c.Confirm(combined)
+	if !c.IsEmpty() {
+		t.Fatal("cache is not empty after confirmation")
+	}
+}
+
 func BenchmarkPopNotConfirmed(b *testing.B) {
 	c := New()
 	p1 := points.OnePoint("hello.world", 42, 10)

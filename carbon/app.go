@@ -329,8 +329,8 @@ func (app *App) startPersister() {
 			app.Cache.PopNotConfirmed,
 			app.Cache.Confirm,
 			app.Cache.Pop,
-			app.Cache.Add,
 		)
+		p.SetRequeue(app.Cache.Requeue)
 		p.SetMaxUpdatesPerSecond(app.Config.Whisper.MaxUpdatesPerSecond)
 		p.SetSparse(app.Config.Whisper.Sparse)
 		p.SetFLock(app.Config.Whisper.FLock)
@@ -416,6 +416,9 @@ func (app *App) Start() (err error) {
 			zap.Int("restorePerSecond", conf.Dump.RestorePerSecond),
 		)
 		app.Restore(core.Add, conf.Dump.Path, conf.Dump.RestorePerSecond)
+		for !core.IsEmpty() {
+			time.Sleep(10 * time.Millisecond)
+		}
 		logger.Info("dump restored, starting receivers")
 	}
 
@@ -531,7 +534,6 @@ func (app *App) Start() (err error) {
 		carbonserver.SetFLock(app.Config.Whisper.FLock)
 		carbonserver.SetCompressed(app.Config.Whisper.Compressed)
 		carbonserver.SetRemoveEmptyFile(app.Config.Whisper.RemoveEmptyFile)
-		carbonserver.SetOutOfOrder(app.Config.Whisper.OutOfOrder)
 		carbonserver.SetFailOnMaxGlobs(conf.Carbonserver.FailOnMaxGlobs)
 		carbonserver.SetMaxMetricsGlobbed(conf.Carbonserver.MaxMetricsGlobbed)
 		carbonserver.SetMaxMetricsRendered(conf.Carbonserver.MaxMetricsRendered)
@@ -715,7 +717,7 @@ func (app *App) CheckPersisterPolicyConsistencies(rate int, printInconsistentMet
 		app.Config.Whisper.DataDir,
 		app.Config.Whisper.Schemas,
 		app.Config.Whisper.Aggregation,
-		nil, nil, nil, nil, nil,
+		nil, nil, nil, nil,
 	)
 	err := p.CheckPolicyConsistencies(rate, printInconsistentMetrics)
 	if err != nil {
