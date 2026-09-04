@@ -159,6 +159,33 @@ remove-empty-file = false
 # online-migration-rate = 5
 # online-migration-global-scope = "-"
 
+# Preserve data points that the compressed format cannot write (EXPERIMENTAL).
+#
+# cwhisper encodes each block as a delta chain, so a point that is not newer
+# than the newest one already in the block cannot be written in place and is
+# discarded (see the persister.oooDiscardedPoints metric). That loses late
+# arrivals from lagging relays, and makes backfilling history impossible.
+#
+# With out-of-order enabled those points are written instead to a classic
+# whisper sidecar, "<metric>.wsp.ooo", holding the same retentions, and
+# merged back in on read. Where the compressed file already has a value it
+# wins; the sidecar only fills gaps. The .wsp file itself is unchanged and
+# stays readable by any other tool.
+#
+# Sidecars are folded back into the compressed file once they reach
+# out-of-order-compact-threshold bytes of physical (not apparent) size. That is
+# a full file rewrite, so it is limited to out-of-order-compact-rate metrics
+# per second and is skipped, never queued, when there is no budget.
+# out-of-order-sparse-create makes sidecars sparse even when sparse-create is
+# false. Disable it to make sidecars follow sparse-create.
+#
+# Requires compressed = true. Not supported for mix aggregation.
+#
+# out-of-order = false
+# out-of-order-sparse-create = true
+# out-of-order-compact-rate = 5
+# out-of-order-compact-threshold = 65536
+
 [cache]
 # Limit of in-memory stored points (not metrics)
 max-size = 1000000

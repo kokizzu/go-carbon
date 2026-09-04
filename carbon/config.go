@@ -76,6 +76,20 @@ type whisperConfig struct {
 	OnlineMigration            bool   `toml:"online-migration"`
 	OnlineMigrationRate        int    `toml:"online-migration-rate"` // metrics per second
 	OnlineMigrationGlobalScope string `toml:"online-migration-global-scope"`
+
+	// Compressed files cannot write a point that is older than the newest one
+	// already in the block, so late arrivals and backfill are normally
+	// discarded (see persister.oooDiscardedPoints). With out-of-order enabled
+	// they are diverted to a classic whisper sidecar next to the file
+	// and merged back in on read.
+	OutOfOrder bool `toml:"out-of-order"`
+	// Create out-of-order sidecars sparsely even when Sparse is disabled.
+	OutOfOrderSparseCreate bool `toml:"out-of-order-sparse-create"`
+	// How many metrics per second may fold their sidecar back into the
+	// compressed file. Compaction is a full file rewrite.
+	OutOfOrderCompactRate int `toml:"out-of-order-compact-rate"`
+	// Physical size a sidecar must reach before it is compacted, in bytes.
+	OutOfOrderCompactThreshold int64 `toml:"out-of-order-compact-threshold"`
 }
 
 type cacheConfig struct {
@@ -248,6 +262,11 @@ func NewConfig() *Config {
 			OnlineMigration:            false,
 			OnlineMigrationRate:        5,
 			OnlineMigrationGlobalScope: "",
+
+			OutOfOrder:                 false,
+			OutOfOrderSparseCreate:     true,
+			OutOfOrderCompactRate:      5,
+			OutOfOrderCompactThreshold: 65536,
 		},
 		Cache: cacheConfig{
 			MaxSize:       1000000,

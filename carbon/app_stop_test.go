@@ -2,6 +2,7 @@ package carbon
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 	"testing"
@@ -37,6 +38,60 @@ func TestStartStop(t *testing.T) {
 		p.WriteTo(os.Stdout, 1)
 	}
 
+}
+
+func TestRestoreStartupOrdering(t *testing.T) {
+	tests := []struct {
+		name             string
+		globalCompressed bool
+		schemaCompressed bool
+	}{
+		{name: "global", globalCompressed: true},
+		{name: "schema", schemaCompressed: true},
+		{name: "normal whisper"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			qa.Root(t, func(root string) {
+				app := New(TestConfig(root))
+				assert.NoError(t, app.ParseConfig())
+
+				app.Config.Whisper.Compressed = tt.globalCompressed
+				if tt.schemaCompressed {
+					compressed := true
+					app.Config.Whisper.Schemas[0].Compressed = &compressed
+				}
+				app.Config.Dump.Enabled = true
+				app.Config.Dump.Path = root
+				app.Config.Dump.RestorePerSecond = 1
+				app.Config.Udp.Enabled = false
+				app.Config.Tcp.Enabled = false
+				app.Config.Pickle.Enabled = false
+				app.Config.Grpc.Enabled = false
+				app.Config.Carbonlink.Enabled = false
+
+				dump := filepath.Join(root, "input.1.1")
+				assert.NoError(t, os.WriteFile(dump, []byte("restore.test 1 1700000000\n"), 0o600))
+				assert.NoError(t, app.Start())
+				defer app.Stop()
+
+				_, err := os.Stat(dump)
+				if tt.globalCompressed || tt.schemaCompressed {
+					assert.ErrorIs(t, err, os.ErrNotExist)
+					return
+				}
+				assert.NoError(t, err)
+
+				deadline := time.Now().Add(2 * time.Second)
+				for !os.IsNotExist(err) && time.Now().Before(deadline) {
+					time.Sleep(10 * time.Millisecond)
+					_, err = os.Stat(dump)
+				}
+				assert.ErrorIs(t, err, os.ErrNotExist)
+			})
+		})
+	}
 }
 
 func TestReloadAndCollectorDeadlock(t *testing.T) {
