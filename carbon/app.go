@@ -329,6 +329,7 @@ func (app *App) startPersister() {
 			app.Cache.PopNotConfirmed,
 			app.Cache.Confirm,
 			app.Cache.Pop,
+			app.Cache.Add,
 		)
 		p.SetMaxUpdatesPerSecond(app.Config.Whisper.MaxUpdatesPerSecond)
 		p.SetSparse(app.Config.Whisper.Sparse)
@@ -351,7 +352,7 @@ func (app *App) startPersister() {
 		}
 
 		if cfg := app.Config.Whisper; cfg.OutOfOrder {
-			p.EnableOutOfOrder(cfg.OutOfOrderCompactRate, cfg.OutOfOrderCompactThreshold, cfg.OutOfOrderSparseCreate)
+			p.EnableOutOfOrder(cfg.OutOfOrderCompactRate, cfg.OutOfOrderCompactThreshold)
 		}
 
 		p.Start()
@@ -409,7 +410,13 @@ func (app *App) Start() (err error) {
 	restoreBeforeReceivers := conf.Dump.Enabled && conf.Whisper.Enabled &&
 		(conf.Whisper.Compressed || conf.Whisper.Schemas.AnyCompressed())
 	if restoreBeforeReceivers {
+		logger := zapwriter.Logger("app")
+		logger.Info("restoring dump before starting receivers",
+			zap.String("path", conf.Dump.Path),
+			zap.Int("restorePerSecond", conf.Dump.RestorePerSecond),
+		)
 		app.Restore(core.Add, conf.Dump.Path, conf.Dump.RestorePerSecond)
+		logger.Info("dump restored, starting receivers")
 	}
 
 	app.Receivers = make([]*NamedReceiver, 0)
@@ -708,7 +715,7 @@ func (app *App) CheckPersisterPolicyConsistencies(rate int, printInconsistentMet
 		app.Config.Whisper.DataDir,
 		app.Config.Whisper.Schemas,
 		app.Config.Whisper.Aggregation,
-		nil, nil, nil, nil,
+		nil, nil, nil, nil, nil,
 	)
 	err := p.CheckPolicyConsistencies(rate, printInconsistentMetrics)
 	if err != nil {

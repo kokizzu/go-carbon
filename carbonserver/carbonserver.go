@@ -1112,10 +1112,11 @@ func (listener *CarbonserverListener) updateFileList(dir string, cacheMetricName
 						_, _, dataPoints = listener.estimateSize(m)
 					}
 					if listener.outOfOrder {
-						logicalSize, physicalSize, err = metricFileSizes(p, info)
-						if err != nil {
+						var sizeErr error
+						logicalSize, physicalSize, sizeErr = metricFileSizes(p, info)
+						if sizeErr != nil {
 							logger.Info("failed to stat out-of-order sidecar",
-								zap.String("path", whisper.OutOfOrderSidecarPath(p)), zap.Error(err))
+								zap.String("path", whisper.OutOfOrderSidecarPath(p)), zap.Error(sizeErr))
 						}
 					} else {
 						logicalSize = info.Size()

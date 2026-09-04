@@ -176,13 +176,11 @@ remove-empty-file = false
 # out-of-order-compact-threshold bytes of physical (not apparent) size. That is
 # a full file rewrite, so it is limited to out-of-order-compact-rate metrics
 # per second and is skipped, never queued, when there is no budget.
-# out-of-order-sparse-create makes sidecars sparse even when sparse-create is
-# false. Disable it to make sidecars follow sparse-create.
+# Sidecars are always sparse, regardless of sparse-create.
 #
 # Requires compressed = true. Not supported for mix aggregation.
 #
 # out-of-order = false
-# out-of-order-sparse-create = true
 # out-of-order-compact-rate = 5
 # out-of-order-compact-threshold = 65536
 
@@ -583,6 +581,13 @@ enabled = false
 # Directory for store dump data. Should be writeable for carbon
 path = "/var/lib/graphite/dump/"
 # Restore speed. 0 - unlimited
+#
+# With whisper compressed = true the dump is restored before the receivers start
+# listening, so replayed points cannot fall behind a block watermark that live
+# traffic has already advanced. A non-zero limit therefore delays startup by
+# roughly (dumped points / restore-per-second) seconds, during which nothing is
+# accepted: keep it high enough that a restart finishes inside whatever grace
+# period your health check or supervisor allows.
 restore-per-second = 0
 
 [pprof]

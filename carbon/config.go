@@ -83,8 +83,6 @@ type whisperConfig struct {
 	// they are diverted to a classic whisper sidecar next to the file
 	// and merged back in on read.
 	OutOfOrder bool `toml:"out-of-order"`
-	// Create out-of-order sidecars sparsely even when Sparse is disabled.
-	OutOfOrderSparseCreate bool `toml:"out-of-order-sparse-create"`
 	// How many metrics per second may fold their sidecar back into the
 	// compressed file. Compaction is a full file rewrite.
 	OutOfOrderCompactRate int `toml:"out-of-order-compact-rate"`
@@ -264,7 +262,6 @@ func NewConfig() *Config {
 			OnlineMigrationGlobalScope: "",
 
 			OutOfOrder:                 false,
-			OutOfOrderSparseCreate:     true,
 			OutOfOrderCompactRate:      5,
 			OutOfOrderCompactThreshold: 65536,
 		},

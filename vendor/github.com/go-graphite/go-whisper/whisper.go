@@ -536,8 +536,7 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 
 	// pre-allocate file size, fallocate proved slower
 	//
-	// compressed format ignores the sparse flag for its main file; an
-	// out-of-order sidecar uses it when one is created
+	// compressed format ignores sparse flag
 	if options.Sparse && !options.Compressed {
 		if _, err = whisper.file.Seek(int64(whisper.Size()-1), 0); err != nil {
 			return nil, err

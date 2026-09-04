@@ -17,10 +17,16 @@ import (
 )
 
 // fakeCache is the minimum of cache.Cache that store() actually uses.
+//
+// pop and confirm mirror cache.PopNotConfirmed/cache.Confirm: pop parks the
+// batch in notConfirmed, where it stays visible to readers, and only confirm
+// releases it. A batch that is neither confirmed nor re-added therefore shows up
+// as a permanently non-empty notConfirmed, exactly as it would in cache.Cache.
 type fakeCache struct {
-	mu        sync.Mutex
-	data      map[string]*points.Points
-	confirmed int
+	mu           sync.Mutex
+	data         map[string]*points.Points
+	notConfirmed []*points.Points
+	confirmed    int
 }
 
 func (c *fakeCache) add(metric string, timestamp int64, value float64) {
@@ -47,14 +53,52 @@ func (c *fakeCache) pop(metric string) (*points.Points, bool) {
 		return nil, false
 	}
 	delete(c.data, metric)
+	c.notConfirmed = append(c.notConfirmed, p)
 
 	return p, true
 }
 
+// addPoints stands in for cache.Add, which is how store() puts a failed batch
+// back for the next writeout to retry.
+func (c *fakeCache) addPoints(p *points.Points) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.data == nil {
+		c.data = map[string]*points.Points{}
+	}
+	if existing, ok := c.data[p.Metric]; ok {
+		existing.Data = append(existing.Data, p.Data...)
+		return
+	}
+	c.data[p.Metric] = p
+}
+
 func (c *fakeCache) confirm(p *points.Points) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	c.confirmed += len(p.Data)
-	c.mu.Unlock()
+	for i, np := range c.notConfirmed {
+		if np == p {
+			c.notConfirmed = append(c.notConfirmed[:i], c.notConfirmed[i+1:]...)
+			break
+		}
+	}
+}
+
+// notConfirmedPoints is the count still parked in notConfirmed; anything left
+// here after store() returns would be pinned for the process lifetime.
+func (c *fakeCache) notConfirmedPoints() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	n := 0
+	for _, p := range c.notConfirmed {
+		n += len(p.Data)
+	}
+
+	return n
 }
 
 func (c *fakeCache) confirmedPoints() int {
@@ -64,7 +108,7 @@ func (c *fakeCache) confirmedPoints() int {
 	return c.confirmed
 }
 
-func newOOOTestPersister(t *testing.T, dataDir string, cache *fakeCache, sparseCreate bool) *Whisper {
+func newOOOTestPersister(t *testing.T, dataDir string, cache *fakeCache) *Whisper {
 	t.Helper()
 
 	retentionStr := "1s:2h"
@@ -89,9 +133,10 @@ func newOOOTestPersister(t *testing.T, dataDir string, cache *fakeCache, sparseC
 		cache.pop,
 		cache.confirm,
 		cache.pop,
+		cache.addPoints,
 	)
 	p.SetCompressed(true)
-	p.EnableOutOfOrder(100, 1<<30, sparseCreate)
+	p.EnableOutOfOrder(100, 1<<30)
 	// Start() would also spawn workers; the tests drive store() directly
 	p.outOfOrder.ticker = helper.NewHardThrottleTicker(p.outOfOrder.rate)
 	t.Cleanup(p.outOfOrder.ticker.Stop)
@@ -128,7 +173,7 @@ func TestStoreDivertsAndCompactsOutOfOrderPoints(t *testing.T) {
 	cache := &fakeCache{}
 
 	// high threshold so the first pass diverts without compacting
-	p := newOOOTestPersister(t, dir, cache, true)
+	p := newOOOTestPersister(t, dir, cache)
 
 	const metric = "test.ooo"
 	path := filepath.Join(dir, "test", "ooo.wsp")
@@ -197,7 +242,7 @@ func TestStoreDiscardsOutOfOrderPointsWhenDisabled(t *testing.T) {
 	dir := t.TempDir()
 	cache := &fakeCache{}
 
-	p := newOOOTestPersister(t, dir, cache, true)
+	p := newOOOTestPersister(t, dir, cache)
 	p.outOfOrder.enabled = false
 
 	const metric = "test.ooo"
@@ -226,51 +271,41 @@ func TestStoreDiscardsOutOfOrderPointsWhenDisabled(t *testing.T) {
 	}
 }
 
-func TestStoreCreatesOutOfOrderSidecarWithConfiguredSparsity(t *testing.T) {
-	tests := []struct {
-		name         string
-		sparseCreate bool
-	}{
-		{name: "sparse", sparseCreate: true},
-		{name: "dense", sparseCreate: false},
+func TestStoreAlwaysCreatesSparseOutOfOrderSidecar(t *testing.T) {
+	dir := t.TempDir()
+	cache := &fakeCache{}
+	p := newOOOTestPersister(t, dir, cache)
+	p.SetSparse(false)
+
+	const metric = "test.sparsity"
+	path := filepath.Join(dir, "test", "sparsity.wsp")
+	base := int64(time.Now().Unix()) - 3600
+	cache.add(metric, base, 1)
+	cache.add(metric, base+2, 2)
+	p.store(metric)
+	cache.add(metric, base+1, 7)
+	p.store(metric)
+
+	info, err := os.Stat(path + ".ooo")
+	if err != nil {
+		t.Fatalf("stat sidecar: %s", err)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			cache := &fakeCache{}
-			p := newOOOTestPersister(t, dir, cache, tt.sparseCreate)
-			p.SetSparse(false)
-
-			const metric = "test.sparsity"
-			path := filepath.Join(dir, "test", "sparsity.wsp")
-			base := int64(time.Now().Unix()) - 3600
-			cache.add(metric, base, 1)
-			cache.add(metric, base+2, 2)
-			p.store(metric)
-			cache.add(metric, base+1, 7)
-			p.store(metric)
-
-			info, err := os.Stat(path + ".ooo")
-			if err != nil {
-				t.Fatalf("stat sidecar: %s", err)
-			}
-			stat, ok := info.Sys().(*syscall.Stat_t)
-			if !ok {
-				t.Skip("physical file size is unavailable")
-			}
-			gotSparse := stat.Blocks*512 < info.Size()
-			if gotSparse != tt.sparseCreate {
-				t.Errorf("sidecar sparse = %t (logical=%d physical=%d); want %t", gotSparse, info.Size(), stat.Blocks*512, tt.sparseCreate)
-			}
-		})
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Skip("physical file size is unavailable")
+	}
+	if physical := stat.Blocks * 512; physical >= info.Size() {
+		t.Errorf("sidecar is not sparse: logical=%d physical=%d", info.Size(), physical)
 	}
 }
 
-func TestStoreDoesNotConfirmFailedOutOfOrderWrite(t *testing.T) {
+// A write that fails must not be counted as committed, and must not be left
+// parked in the cache's not-confirmed list either: it goes back into the cache
+// so the next writeout retries it.
+func TestStoreRetriesFailedOutOfOrderWrite(t *testing.T) {
 	dir := t.TempDir()
 	cache := &fakeCache{}
-	p := newOOOTestPersister(t, dir, cache, true)
+	p := newOOOTestPersister(t, dir, cache)
 
 	const metric = "test.ooo"
 	path := filepath.Join(dir, "test", "ooo.wsp")
@@ -282,25 +317,38 @@ func TestStoreDoesNotConfirmFailedOutOfOrderWrite(t *testing.T) {
 	if got := cache.confirmedPoints(); got != 2 {
 		t.Fatalf("confirmed points after initial write = %d; want 2", got)
 	}
+	if got := cache.notConfirmedPoints(); got != 0 {
+		t.Fatalf("not-confirmed points after initial write = %d; want 0", got)
+	}
 
+	// a directory where the sidecar belongs makes every divert fail
 	if err := os.Mkdir(path+".ooo", 0o755); err != nil {
 		t.Fatalf("create invalid sidecar: %s", err)
 	}
 	cache.add(metric, int64(base+1), 7)
 	p.store(metric)
 
-	if got := cache.confirmedPoints(); got != 2 {
-		t.Errorf("confirmed points after failed sidecar write = %d; want 2", got)
-	}
 	if got := p.committedPoints; got != 2 {
 		t.Errorf("committedPoints = %d; want 2", got)
+	}
+	if got := cache.notConfirmedPoints(); got != 0 {
+		t.Errorf("not-confirmed points after failed write = %d; want 0 (batch leaked)", got)
+	}
+
+	// the failed point is back in the cache, so the next writeout retries it
+	values, ok := cache.pop(metric)
+	if !ok {
+		t.Fatalf("failed batch was not returned to the cache")
+	}
+	if len(values.Data) != 1 || values.Data[0].Timestamp != int64(base+1) {
+		t.Errorf("re-added batch = %+v; want the single point at %d", values.Data, base+1)
 	}
 }
 
 func TestCompactionFailureWithFLockDoesNotDeadlock(t *testing.T) {
 	dir := t.TempDir()
 	cache := &fakeCache{}
-	p := newOOOTestPersister(t, dir, cache, true)
+	p := newOOOTestPersister(t, dir, cache)
 	p.SetFLock(true)
 
 	const metric = "test.ooo"
@@ -349,7 +397,7 @@ func TestCompactionFailureWithFLockDoesNotDeadlock(t *testing.T) {
 func TestOnlineMigrationWithFLockDoesNotDeadlock(t *testing.T) {
 	dir := t.TempDir()
 	cache := &fakeCache{}
-	p := newOOOTestPersister(t, dir, cache, true)
+	p := newOOOTestPersister(t, dir, cache)
 	p.SetFLock(true)
 
 	const metric = "test.migration"

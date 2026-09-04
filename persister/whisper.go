@@ -38,6 +38,7 @@ type Whisper struct {
 	pop                 func(string) (*points.Points, bool)
 	confirm             func(*points.Points)
 	popConfirm          func(string) (*points.Points, bool)
+	add                 func(*points.Points)
 	tagsEnabled         bool
 	taggedFn            func(string, bool)
 	schemas             WhisperSchemas
@@ -67,11 +68,10 @@ type Whisper struct {
 	// outOfOrder diverts points the compressed format rejects into a sidecar
 	// file and folds them back in periodically. See go-whisper's ooo.go.
 	outOfOrder struct {
-		enabled      bool
-		sparseCreate bool
-		rate         int
-		threshold    int64
-		ticker       *helper.ThrottleTicker
+		enabled   bool
+		rate      int
+		threshold int64
+		ticker    *helper.ThrottleTicker
 	}
 
 	onlineMigration struct {
@@ -114,13 +114,15 @@ func NewWhisper(
 	recv func(chan bool) string,
 	pop func(string) (*points.Points, bool),
 	confirm func(*points.Points),
-	popConfirm func(string) (*points.Points, bool)) *Whisper {
+	popConfirm func(string) (*points.Points, bool),
+	add func(*points.Points)) *Whisper {
 
 	return &Whisper{
 		recv:         recv,
 		pop:          pop,
 		confirm:      confirm,
 		popConfirm:   popConfirm,
+		add:          add,
 		schemas:      schemas,
 		aggregation:  aggregation,
 		workersCount: 1,
@@ -201,10 +203,8 @@ func (p *Whisper) SetCompressed(compressed bool) {
 // EnableOutOfOrder diverts points that the compressed format rejects as too old
 // into a sidecar file, and folds a sidecar back into its compressed file once it
 // reaches thresholdBytes of physical size, at most rate metrics per second.
-// sparseCreate makes sidecars sparse even when regular sparse creation is off.
-func (p *Whisper) EnableOutOfOrder(rate int, thresholdBytes int64, sparseCreate bool) {
+func (p *Whisper) EnableOutOfOrder(rate int, thresholdBytes int64) {
 	p.outOfOrder.enabled = true
-	p.outOfOrder.sparseCreate = sparseCreate
 	p.outOfOrder.rate = rate
 	p.outOfOrder.threshold = thresholdBytes
 }
@@ -351,7 +351,7 @@ func (p *Whisper) compactOutOfOrder(w *whisper.Whisper, metric, path string) *wh
 	// MergeOutOfOrder may already have closed it, so the close error is ignored.
 	_ = w.Close()
 	nw, err := whisper.OpenWithOptions(path, &whisper.Options{
-		Sparse:     p.sparse || p.outOfOrder.sparseCreate,
+		Sparse:     p.sparse,
 		FLock:      p.flock,
 		Compressed: p.compressed,
 		OutOfOrder: p.outOfOrder.enabled,
@@ -402,7 +402,7 @@ func (p *Whisper) store(metric string) {
 
 	var newFile bool
 	w, err := whisper.OpenWithOptions(path, &whisper.Options{
-		Sparse:     p.sparse || p.outOfOrder.sparseCreate,
+		Sparse:     p.sparse,
 		FLock:      p.flock,
 		Compressed: p.compressed,
 		OutOfOrder: p.outOfOrder.enabled,
@@ -459,7 +459,7 @@ func (p *Whisper) store(metric string) {
 			compressed = *schema.Compressed
 		}
 		w, err = whisper.CreateWithOptions(path, schema.Retentions, aggr.aggregationMethod, float32(aggr.xFilesFactor), &whisper.Options{
-			Sparse:     p.sparse || (compressed && p.outOfOrder.sparseCreate),
+			Sparse:     p.sparse,
 			FLock:      p.flock,
 			Compressed: compressed,
 			OutOfOrder: p.outOfOrder.enabled,
@@ -506,7 +506,7 @@ func (p *Whisper) store(metric string) {
 				_ = w.Close()
 			}
 			w, err = whisper.OpenWithOptions(path, &whisper.Options{
-				Sparse:     p.sparse || p.outOfOrder.sparseCreate,
+				Sparse:     p.sparse,
 				FLock:      p.flock,
 				Compressed: p.compressed,
 				OutOfOrder: p.outOfOrder.enabled,
@@ -535,6 +535,18 @@ func (p *Whisper) store(metric string) {
 
 	// start = time.Now()
 	if err := p.updateMany(w, path, points); err != nil {
+		// pop() already took these out of the cache's live map and parked them
+		// in its not-confirmed list, where only confirm() releases them. Add
+		// them back first so they stay visible to readers, then confirm, so the
+		// next writeout retries the write instead of the batch being pinned in
+		// not-confirmed for the lifetime of the process.
+		if p.add != nil {
+			p.add(values)
+		}
+		if p.confirm != nil {
+			p.confirm(values)
+		}
+
 		return
 	}
 
@@ -750,7 +762,7 @@ func (p *Whisper) checkAndUpdateSchemaAndAggregation(w *whisper.Whisper, metric 
 		compressed = *schema.Compressed
 	}
 	options := &whisper.Options{
-		Sparse:     p.sparse || (compressed && p.outOfOrder.sparseCreate),
+		Sparse:     p.sparse,
 		FLock:      p.flock,
 		Compressed: compressed,
 		OutOfOrder: p.outOfOrder.enabled,
@@ -832,7 +844,7 @@ func (p *Whisper) checkAndUpdateSchemaAndAggregation(w *whisper.Whisper, metric 
 
 	// reopen whisper file
 	nw, err := whisper.OpenWithOptions(path, &whisper.Options{
-		Sparse:     p.sparse || p.outOfOrder.sparseCreate,
+		Sparse:     p.sparse,
 		FLock:      p.flock,
 		Compressed: compressed,
 		OutOfOrder: p.outOfOrder.enabled,

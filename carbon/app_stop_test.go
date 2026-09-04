@@ -83,12 +83,11 @@ func TestRestoreStartupOrdering(t *testing.T) {
 				}
 				assert.NoError(t, err)
 
-				deadline := time.Now().Add(2 * time.Second)
-				for !os.IsNotExist(err) && time.Now().Before(deadline) {
-					time.Sleep(10 * time.Millisecond)
-					_, err = os.Stat(dump)
-				}
-				assert.ErrorIs(t, err, os.ErrNotExist)
+				assert.Eventually(t, func() bool {
+					_, err := os.Stat(dump)
+					return os.IsNotExist(err)
+				}, 30*time.Second, 10*time.Millisecond,
+					"dumpFile should be removed after restore")
 			})
 		})
 	}

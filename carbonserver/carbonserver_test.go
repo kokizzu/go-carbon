@@ -151,6 +151,7 @@ func getTestPersister(dataDir string, cache *cache.Cache) *persister.Whisper {
 		cache.PopNotConfirmed,
 		cache.Confirm,
 		cache.Pop,
+		cache.Add,
 	)
 
 	return testPersister
