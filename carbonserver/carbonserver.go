@@ -463,7 +463,7 @@ type jsonMetricDetailsResponse struct {
 }
 
 type fileIndex struct {
-	typ int //nolint:unused,structcheck //skipcq: SCC-U1000
+	typ int //nolint:unused //skipcq: SCC-U1000
 
 	idx   trigram.Index
 	files []string

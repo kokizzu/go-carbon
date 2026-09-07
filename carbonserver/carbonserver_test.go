@@ -83,7 +83,7 @@ func (r *wspConfigTestRetriever) MetricAggrConf(metric string) (string, float64,
 type FetchTest struct {
 	path             string
 	name             string
-	now              int //nolint:structcheck
+	now              int
 	from             int
 	until            int
 	createWhisper    bool
