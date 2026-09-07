@@ -56,6 +56,7 @@ import (
 	"github.com/go-graphite/go-carbon/helper/grpcutil"
 	"github.com/go-graphite/go-carbon/helper/stat"
 	"github.com/go-graphite/go-carbon/points"
+	whisper "github.com/go-graphite/go-whisper"
 	grpcv2 "github.com/go-graphite/protocol/carbonapi_v2_grpc"
 	protov3 "github.com/go-graphite/protocol/carbonapi_v3_pb"
 	"github.com/lomik/zapwriter"
@@ -462,7 +463,7 @@ type jsonMetricDetailsResponse struct {
 }
 
 type fileIndex struct {
-	typ int //nolint:unused,structcheck //skipcq: SCC-U1000
+	typ int //nolint:unused //skipcq: SCC-U1000
 
 	idx   trigram.Index
 	files []string
@@ -902,6 +903,29 @@ func (listener *CarbonserverListener) refreshQuotaAndUsage(quotaAndUsageStatTick
 	)
 }
 
+func metricFileSizes(path string, info os.FileInfo) (logical, physical int64, err error) {
+	add := func(info os.FileInfo) {
+		logical += info.Size()
+		size := info.Size()
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+			size = stat.Blocks * 512
+		}
+		physical += size
+	}
+
+	add(info)
+	sidecar, err := os.Stat(whisper.OutOfOrderSidecarPath(path))
+	if errors.Is(err, os.ErrNotExist) {
+		return logical, physical, nil
+	}
+	if err != nil {
+		return logical, physical, err
+	}
+	add(sidecar)
+
+	return logical, physical, nil
+}
+
 func (listener *CarbonserverListener) updateFileList(dir string, cacheMetricNames map[string]struct{}, quotaAndUsageStatTicker <-chan time.Time) (readFromCache bool) {
 	logger := listener.logger.With(zap.String("handler", "fileListUpdated"))
 	defer func() {
@@ -1083,10 +1107,11 @@ func (listener *CarbonserverListener) updateFileList(dir string, cacheMetricName
 						m = m[1 : len(m)-4]
 						_, _, dataPoints = listener.estimateSize(m)
 					}
-					logicalSize = info.Size()
-					physicalSize = logicalSize
-					if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-						physicalSize = stat.Blocks * 512
+					var sizeErr error
+					logicalSize, physicalSize, sizeErr = metricFileSizes(p, info)
+					if sizeErr != nil {
+						logger.Info("failed to stat out-of-order sidecar",
+							zap.String("path", whisper.OutOfOrderSidecarPath(p)), zap.Error(sizeErr))
 					}
 				}
 
@@ -1137,6 +1162,8 @@ func (listener *CarbonserverListener) updateFileList(dir string, cacheMetricName
 
 				if isFullMetric && listener.internalStatsDir != "" {
 					i := stat.GetStat(info)
+					i.Size = logicalSize
+					i.RealSize = physicalSize
 					trimmedName = strings.ReplaceAll(trimmedName[1:len(trimmedName)-4], "/", ".")
 					details[trimmedName] = &protov3.MetricDetails{
 						Size:     i.Size,

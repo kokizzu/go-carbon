@@ -129,6 +129,19 @@ func (app *App) configure() error {
 		} else {
 			cfg.Whisper.Aggregation = persister.NewWhisperAggregation()
 		}
+
+		if cfg.Whisper.OutOfOrder {
+			// the uncompressed format already writes points in any order
+			if !cfg.Whisper.Compressed && !cfg.Whisper.Schemas.AnyCompressed() {
+				return fmt.Errorf("whisper.out-of-order requires whisper.compressed, or a schema with compressed = true")
+			}
+			if cfg.Whisper.OutOfOrderCompactRate <= 0 {
+				return fmt.Errorf("whisper.out-of-order-compact-rate must be positive, got %d", cfg.Whisper.OutOfOrderCompactRate)
+			}
+			if cfg.Whisper.OutOfOrderCompactThreshold <= 0 {
+				return fmt.Errorf("whisper.out-of-order-compact-threshold must be positive, got %d", cfg.Whisper.OutOfOrderCompactThreshold)
+			}
+		}
 	}
 	if !(cfg.Cache.WriteStrategy == "max" ||
 		cfg.Cache.WriteStrategy == "sorted" ||
@@ -317,6 +330,7 @@ func (app *App) startPersister() {
 			app.Cache.Confirm,
 			app.Cache.Pop,
 		)
+		p.SetRequeue(app.Cache.Requeue)
 		p.SetMaxUpdatesPerSecond(app.Config.Whisper.MaxUpdatesPerSecond)
 		p.SetSparse(app.Config.Whisper.Sparse)
 		p.SetFLock(app.Config.Whisper.FLock)
@@ -335,6 +349,10 @@ func (app *App) startPersister() {
 		if cfg := app.Config.Whisper; cfg.OnlineMigration {
 			scope := strings.Split(strings.TrimSpace(cfg.OnlineMigrationGlobalScope), ",")
 			p.EnableOnlineMigration(cfg.OnlineMigrationRate, scope)
+		}
+
+		if cfg := app.Config.Whisper; cfg.OutOfOrder {
+			p.EnableOutOfOrder(cfg.OutOfOrderCompactRate, cfg.OutOfOrderCompactThreshold)
 		}
 
 		p.Start()
@@ -386,6 +404,23 @@ func (app *App) Start() (err error) {
 	/* WHISPER and TAGS start */
 	app.startPersister()
 	/* WHISPER and TAGS end */
+
+	// Restore cwhisper data before receivers can advance block watermarks past
+	// replayed points. Keep the persister running so it can drain the cache.
+	restoreBeforeReceivers := conf.Dump.Enabled && conf.Whisper.Enabled &&
+		(conf.Whisper.Compressed || conf.Whisper.Schemas.AnyCompressed())
+	if restoreBeforeReceivers {
+		logger := zapwriter.Logger("app")
+		logger.Info("restoring dump before starting receivers",
+			zap.String("path", conf.Dump.Path),
+			zap.Int("restorePerSecond", conf.Dump.RestorePerSecond),
+		)
+		app.Restore(core.Add, conf.Dump.Path, conf.Dump.RestorePerSecond)
+		for !core.IsEmpty() {
+			time.Sleep(10 * time.Millisecond)
+		}
+		logger.Info("dump restored, starting receivers")
+	}
 
 	app.Receivers = make([]*NamedReceiver, 0)
 	var rcv receiver.Receiver
@@ -654,7 +689,7 @@ func (app *App) Start() (err error) {
 	/* CARBONLINK end */
 
 	/* RESTORE start */
-	if conf.Dump.Enabled {
+	if conf.Dump.Enabled && !restoreBeforeReceivers {
 		go app.Restore(core.Add, conf.Dump.Path, conf.Dump.RestorePerSecond)
 	}
 	/* RESTORE end */

@@ -9,10 +9,8 @@ import (
 //   - A soft rate limiter will send a message on C at the actual rate that is
 //     specified.
 //
-//   - A hard rate limiter may send arbitrarily many messages on C every second,
-//     but it will send the value 'true' with the first ratePerSec ones, and
-//     'false' with all subsequent ones, until the next second. It is up to the
-//     user to decide what to do in each case.
+//   - A hard rate limiter makes up to ratePerSec 'true' messages available at
+//     once each second. It sends nothing after that budget is consumed.
 type ThrottleTicker struct {
 	Stoppable
 	C chan bool
@@ -97,23 +95,33 @@ func hardThrottle(notThrottle chan bool, ratePerSec int) func(chan bool) {
 	return func(exit chan bool) {
 		defer close(notThrottle)
 
-		sent := 0
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
+
+		refill := func() bool {
+			missing := ratePerSec - len(notThrottle)
+			for i := 0; i < missing; i++ {
+				select {
+				case notThrottle <- true:
+				case <-exit:
+					return false
+				}
+			}
+			return true
+		}
+
+		if !refill() {
+			return
+		}
+
 		for {
 			select {
 			case <-ticker.C:
-				sent = 0
+				if !refill() {
+					return
+				}
 			case <-exit:
 				return
-			default:
-				if sent < ratePerSec {
-					select {
-					case notThrottle <- true:
-						sent++
-					default:
-					}
-				}
 			}
 		}
 	}

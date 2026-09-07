@@ -40,7 +40,7 @@ type gmatcher struct {
 	root    *gstate
 	expr    string
 	dstates []*gdstate
-	dsindex int //nolint:unused,structcheck
+	dsindex int //nolint:unused
 
 }
 
@@ -2001,9 +2001,9 @@ func (ti *trieIndex) generateTrieMetrics(metricName string, node *trieNode, thro
 	})
 }
 
-//nolint:golint,unused
+//nolint:unused
 func (ti *trieIndex) getNodeFullPath(node *trieNode) string { // skipcq: SCC-U1000
-	//nolint:golint,unused
+	//nolint:unused
 	type state struct { // skipcq: SCC-U1000
 		next      int
 		node      *trieNode

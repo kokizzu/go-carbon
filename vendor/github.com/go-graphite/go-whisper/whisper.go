@@ -123,6 +123,14 @@ type Options struct {
 	SIMV bool // single interval multiple values
 
 	IgnoreNowOnWrite bool
+
+	// OutOfOrder diverts points that the compressed format cannot accept
+	// (those not newer than the current block watermark) into a sidecar file
+	// instead of discarding them. Compressed format only; see ooo.go.
+	//
+	// This flag gates writing only. A sidecar that already exists is always
+	// merged on read, so turning the flag back off does not hide data.
+	OutOfOrder bool
 }
 
 type MixAggregationSpec struct {
@@ -148,7 +156,8 @@ Represents a Whisper database file.
 */
 type Whisper struct {
 	// file *os.File
-	file file
+	file     file
+	lockFile *os.File
 
 	// Metadata
 	aggregationMethod AggregationMethod
@@ -169,6 +178,20 @@ type Whisper struct {
 	NonFatalErrors []error
 
 	discardedPointsAtOpen uint32
+
+	// oooPath is the out-of-order sidecar's path when one exists, otherwise
+	// empty. OutOfOrderPoints counts the points diverted into it since the
+	// last merge (or since this handle was opened). See ooo.go.
+	//
+	// oooBroken latches once a sidecar has been found unusable, so the
+	// mismatch is reported once rather than on every read and write.
+	//
+	// oooFile caches the open sidecar so reads and writes do not reopen it.
+	// It belongs to this handle; use oooSidecar/closeOOO, never Close it.
+	oooPath          string
+	oooBroken        bool
+	oooFile          *Whisper
+	OutOfOrderPoints uint32
 }
 
 /*
@@ -354,6 +377,20 @@ func (whisper *Whisper) fileReadAt(b []byte, off int64) error {
 	return err
 }
 
+func acquirePathLock(path string, lockType int) (*os.File, error) {
+	// Keep this file after unlocking: unlike the database inode, its identity
+	// must survive compressed rewrites that rename a replacement into place.
+	lockFile, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0666) // skipcq: GSC-G302
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(lockFile.Fd()), lockType); err != nil {
+		_ = lockFile.Close()
+		return nil, err
+	}
+	return lockFile, nil
+}
+
 /*
 Create a new Whisper database file and write it's header.
 */
@@ -379,6 +416,18 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 	sort.Sort(retentionsByPrecision{retentions})
 	if err = validateRetentions(retentions); err != nil {
 		return nil, err
+	}
+	var lockFile *os.File
+	if options.FLock && !options.InMemory {
+		lockFile, err = acquirePathLock(path, syscall.LOCK_EX)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if err != nil {
+				_ = lockFile.Close()
+			}
+		}()
 	}
 	_, err = os.Stat(path)
 	if err == nil {
@@ -412,6 +461,7 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 
 	// Set the metadata
 	whisper.file = file
+	whisper.lockFile = lockFile
 	whisper.aggregationMethod = aggregationMethod
 	whisper.xFilesFactor = xFilesFactor
 	whisper.opts = options
@@ -528,6 +578,8 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 		}
 	}
 
+	whisper.discardOrphanedOOO()
+
 	return whisper, nil
 }
 
@@ -595,6 +647,29 @@ func Open(path string) (whisper *Whisper, err error) {
 }
 
 func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error) {
+	return openWithOptions(path, options, nil)
+}
+
+// openWithOptions accepts an already-held path lock when a rewrite reopens the
+// replacement file without exposing an unlocked gap.
+func openWithOptions(path string, options *Options, lockFile *os.File) (whisper *Whisper, err error) {
+	if options == nil {
+		options = &Options{}
+	}
+	ownedLock := false
+	if options.FLock && !options.InMemory {
+		if options.FlockType != syscall.LOCK_SH {
+			options.FlockType = syscall.LOCK_EX
+		}
+		if lockFile == nil {
+			lockFile, err = acquirePathLock(path, options.FlockType)
+			if err != nil {
+				return nil, err
+			}
+			ownedLock = true
+		}
+	}
+
 	var file file
 	if options.InMemory {
 		if mc := options.InMemoryContent; mc != nil {
@@ -614,20 +689,23 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 		file, err = os.OpenFile(path, flag, 0666) // skipcq: GSC-G302
 	}
 	if err != nil {
+		if ownedLock {
+			_ = lockFile.Close()
+		}
 		return
 	}
 
 	defer func() {
 		if err != nil {
 			whisper = nil
-			file.Close()
+			_ = file.Close()
+			if ownedLock {
+				_ = lockFile.Close()
+			}
 		}
 	}()
 
 	if options.FLock {
-		if options.FlockType != syscall.LOCK_SH {
-			options.FlockType = syscall.LOCK_EX
-		}
 		if err = syscall.Flock(int(file.Fd()), options.FlockType); err != nil {
 			return
 		}
@@ -635,6 +713,7 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 
 	whisper = new(Whisper)
 	whisper.file = file
+	whisper.lockFile = lockFile
 	whisper.opts = options
 
 	b := make([]byte, len(compressedMagicString))
@@ -648,7 +727,13 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 
 	// read the metadata
 	if whisper.compressed {
-		return whisper, whisper.readHeaderCompressed()
+		if err := whisper.readHeaderCompressed(); err != nil {
+			return whisper, err
+		}
+		if err := whisper.detectOOO(); err != nil {
+			return whisper, err
+		}
+		return whisper, nil
 	}
 
 	b = make([]byte, MetadataSize)
@@ -745,7 +830,22 @@ func (whisper *Whisper) crc32Offset() int {
 Close the whisper file
 */
 func (whisper *Whisper) Close() error {
-	return whisper.file.Close()
+	// the sidecar's error is reported only if the main file closes cleanly:
+	// failing to write back the metric itself is the more important one
+	oooErr := whisper.closeOOO()
+	fileErr := whisper.file.Close()
+	var lockErr error
+	if whisper.lockFile != nil {
+		lockErr = whisper.lockFile.Close()
+		whisper.lockFile = nil
+	}
+	if fileErr != nil {
+		return fileErr
+	}
+	if oooErr != nil {
+		return oooErr
+	}
+	return lockErr
 }
 
 /*
@@ -923,6 +1023,10 @@ func (whisper *Whisper) UpdateManyForArchive(points []*TimeSeriesPoint, targetRe
 
 	now := int(Now().Unix()) // TODO: danger of 2030 something overflow
 
+	// points the compressed encoder rejects as too old, collected so they can
+	// be diverted to the out-of-order sidecar below instead of being lost
+	var dropped []oooPoint
+
 	var currentPoints []*TimeSeriesPoint
 	for i := 0; i < len(whisper.archives); i++ {
 		archive := whisper.archives[i]
@@ -949,7 +1053,9 @@ func (whisper *Whisper) UpdateManyForArchive(points []*TimeSeriesPoint, targetRe
 			// TODO: add a new options to update data points in smaller chunks if
 			// it exceeeds certain size, so extension could be triggered
 			// properly: ChunkUpdateSize
-			err = whisper.archiveUpdateManyCompressed(archive, currentPoints)
+			var archiveDropped []oooPoint
+			archiveDropped, err = whisper.archiveUpdateManyCompressed(archive, currentPoints)
+			dropped = append(dropped, archiveDropped...)
 		} else {
 			err = whisper.archiveUpdateMany(archive, currentPoints)
 		}
@@ -964,6 +1070,21 @@ func (whisper *Whisper) UpdateManyForArchive(points []*TimeSeriesPoint, targetRe
 	if whisper.compressed {
 		if err := whisper.WriteHeaderCompressed(); err != nil {
 			return err
+		}
+
+		// Divert before extendIfNeeded: extension replaces *whisper wholesale,
+		// and the sidecar bookkeeping has to survive that.
+		//
+		// An unusable sidecar is not an error (the points are dropped as they
+		// would be without the option), so anything returned here is real I/O
+		// trouble. The main file's write has already landed by this point, so a
+		// caller that retries the batch rewrites points it has already stored;
+		// that is idempotent for the main file and deduped per slot in the
+		// sidecar, so a retry is safe.
+		if whisper.oooEnabled() {
+			if err := whisper.divertOutOfOrder(dropped); err != nil {
+				return err
+			}
 		}
 
 		if err := whisper.extendIfNeeded(); err != nil {
@@ -1311,6 +1432,15 @@ func (whisper *Whisper) fetchFromArchive(archive *archiveInfo, fromTime, untilTi
 			}
 			values[index] = dPoint.value
 		}
+
+		// overlay any points that were too old for the compressed encoder and
+		// got diverted to the sidecar
+		if idx := whisper.archiveIndexOf(archive); idx >= 0 {
+			if err := whisper.mergeOutOfOrderValues(idx, fromTime, untilTime, values); err != nil {
+				return nil, err
+			}
+		}
+
 		return &TimeSeries{fromInterval, untilInterval, step, values}, nil
 	} else {
 		baseInterval := whisper.getBaseInterval(archive)
@@ -1775,7 +1905,8 @@ func (whisper *Whisper) HasMatchingConfigs(rets Retentions, aggr AggregationMeth
 }
 
 func (whisper *Whisper) UpdateConfig(rets Retentions, aggr AggregationMethod, xff float32, options *Options) (err error) {
-	newFilename := whisper.file.Name() + ".migrate"
+	filename := whisper.file.Name()
+	newFilename := filename + ".migrate"
 	os.Remove(newFilename) // in case there are broken/corrupted migrate files not being cleaned up properly
 
 	defer func() {
@@ -1790,8 +1921,18 @@ func (whisper *Whisper) UpdateConfig(rets Retentions, aggr AggregationMethod, xf
 	updateRets := !rets.Equal(NewRetentionsNoPointer(whisper.Retentions()))
 	updateAggrXff := whisper.aggregationMethod != aggr || whisper.xFilesFactor != xff
 
+	// A sidecar uses the current grid, aggregation and xFilesFactor. Fold it in
+	// before changing any of them so later writes cannot use stale semantics.
+	if whisper.compressed && whisper.aggregationMethod != Mix && (updateRets || updateAggrXff) {
+		if err := whisper.MergeOutOfOrder(); err != nil {
+			return err
+		}
+	}
+
 	if updateRets {
-		newWhisper, err := CreateWithOptions(newFilename, rets, aggr, xff, options)
+		migrateOptions := *options
+		migrateOptions.FLock = false
+		newWhisper, err := CreateWithOptions(newFilename, rets, aggr, xff, &migrateOptions)
 		if err != nil {
 			return err
 		}
@@ -1804,6 +1945,11 @@ func (whisper *Whisper) UpdateConfig(rets Retentions, aggr AggregationMethod, xf
 
 		// error ignored here, not much we can do if we fail to close files?
 		newWhisper.Close()
+		lockFile := whisper.lockFile
+		whisper.lockFile = nil
+		if lockFile != nil {
+			defer func() { _ = lockFile.Close() }()
+		}
 		whisper.Close()
 
 		if err != nil {
@@ -1811,7 +1957,7 @@ func (whisper *Whisper) UpdateConfig(rets Retentions, aggr AggregationMethod, xf
 		}
 
 		// how about aggregations: go-carbon will use the new aggr when updating retentions
-		return os.Rename(newFilename, whisper.file.Name())
+		return os.Rename(newFilename, filename)
 	}
 
 	if updateAggrXff {

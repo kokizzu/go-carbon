@@ -27,6 +27,46 @@ type point struct {
 	Value     float64
 }
 
+func TestMetricFileSizesIncludesOutOfOrderSidecar(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "metric.wsp")
+	if err := os.WriteFile(path, make([]byte, 4096), 0o600); err != nil {
+		t.Fatalf("write main file: %s", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat main file: %s", err)
+	}
+	mainLogical, mainPhysical, err := metricFileSizes(path, info)
+	if err != nil {
+		t.Fatalf("size main file: %s", err)
+	}
+
+	sidecarPath := whisper.OutOfOrderSidecarPath(path)
+	if err := os.WriteFile(sidecarPath, make([]byte, 2048), 0o600); err != nil {
+		t.Fatalf("write sidecar: %s", err)
+	}
+	sidecarInfo, err := os.Stat(sidecarPath)
+	if err != nil {
+		t.Fatalf("stat sidecar: %s", err)
+	}
+	sidecarLogical, sidecarPhysical, err := metricFileSizes(sidecarPath, sidecarInfo)
+	if err != nil {
+		t.Fatalf("size sidecar: %s", err)
+	}
+
+	logical, physical, err := metricFileSizes(path, info)
+	if err != nil {
+		t.Fatalf("size metric files: %s", err)
+	}
+	if want := mainLogical + sidecarLogical; logical != want {
+		t.Errorf("logical size = %d; want %d", logical, want)
+	}
+	if want := mainPhysical + sidecarPhysical; physical != want {
+		t.Errorf("physical size = %d; want %d", physical, want)
+	}
+}
+
 type wspConfigTestRetriever struct {
 	getRetentionFunc func(string) (int, bool)
 	getAggrNameFunc  func(string) (string, float64, bool)
@@ -43,7 +83,7 @@ func (r *wspConfigTestRetriever) MetricAggrConf(metric string) (string, float64,
 type FetchTest struct {
 	path             string
 	name             string
-	now              int //nolint:structcheck
+	now              int
 	from             int
 	until            int
 	createWhisper    bool

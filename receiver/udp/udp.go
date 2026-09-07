@@ -39,7 +39,7 @@ type UDP struct {
 	name            string
 	metricsReceived uint32
 	errors          uint32
-	logIncomplete   bool //nolint:unused,structcheck
+	logIncomplete   bool //nolint:unused
 	conn            *net.UDPConn
 	buffer          chan *points.Points
 	logger          *zap.Logger

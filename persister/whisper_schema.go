@@ -35,6 +35,18 @@ func (s WhisperSchemas) Len() int           { return len(s) }
 func (s WhisperSchemas) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 func (s WhisperSchemas) Less(i, j int) bool { return s[i].Priority >= s[j].Priority }
 
+// AnyCompressed reports whether any schema turns the compressed format on,
+// regardless of the global setting.
+func (s WhisperSchemas) AnyCompressed() bool {
+	for _, schema := range s {
+		if schema.Compressed != nil && *schema.Compressed {
+			return true
+		}
+	}
+
+	return false
+}
+
 // Match finds the schema for metric or returns false if none found
 func (s WhisperSchemas) Match(metric string) (Schema, bool) {
 	for _, schema := range s {
